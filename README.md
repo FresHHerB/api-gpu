@@ -1,491 +1,817 @@
-# 🎬 API GPU - Video Processing with Vast.ai Auto-Scaling
+# 🎬 API GPU - Serverless Video Processing
 
-API completa de processamento de vídeo com orquestração automática de GPUs via Vast.ai. Arquitetura híbrida que combina VPS (orchestrator) + GPU on-demand (worker).
+**Processamento de vídeo com GPU em escala usando RunPod Serverless + FFmpeg NVENC**
+
+Arquitetura híbrida que combina VPS (orchestrator) + GPU on-demand (RunPod serverless workers) para processar vídeos com aceleração por hardware a custo otimizado.
+
+---
 
 ## 📋 Índice
 
-- [Visão Geral](#-visão-geral)
-- [Arquitetura](#-arquitetura)
-- [Como Funciona](#-como-funciona)
-- [Instalação](#-instalação)
-- [Deploy](#-deploy)
-- [Uso](#-uso)
-- [Configuração](#-configuração)
-- [Desenvolvimento](#-desenvolvimento)
+- [🎯 Visão Geral](#-visão-geral)
+- [🏗️ Arquitetura](#️-arquitetura)
+- [✨ Funcionalidades](#-funcionalidades)
+- [🚀 Início Rápido](#-início-rápido)
+- [📡 API Reference](#-api-reference)
+- [🐳 Deploy](#-deploy)
+- [⚙️ Configuração](#️-configuração)
+- [💻 Desenvolvimento](#-desenvolvimento)
+- [💰 Custos](#-custos)
+- [🔒 Segurança](#-segurança)
 
 ---
 
 ## 🎯 Visão Geral
 
-Este é um **ÚNICO repositório** que contém duas aplicações:
+Este projeto fornece uma API REST para processamento de vídeo com GPU, utilizando **RunPod Serverless** para executar workers FFmpeg com aceleração NVENC apenas quando necessário.
 
-1. **Orchestrator** (VPS/Easypanel): Recebe requisições, gerencia GPUs Vast.ai
-2. **Worker** (Vast.ai GPU): Processa vídeos com FFmpeg + CUDA
+### Por que RunPod Serverless?
 
-### Funcionalidades
+- ✅ **Zero custo em idle**: Pague apenas pelo tempo de execução
+- ✅ **Auto-scaling**: De 0 a N workers automaticamente
+- ✅ **GPU NVIDIA**: RTX 3080/4090 com NVENC para encoding rápido
+- ✅ **Flashboot**: Workers iniciam em ~10s (vs 60s+ em VMs tradicionais)
+- ✅ **Sem gerenciamento**: Não precisa criar/destruir instâncias manualmente
 
-- ✅ **Caption**: Adiciona legendas SRT a vídeos
-- ✅ **Img2Vid**: Converte imagens em vídeos com zoom (Ken Burns)
-- ✅ **AdicionaAudio**: Sincroniza áudio com vídeo
-- 🚀 **Auto-scaling**: Cria GPU sob demanda, destrói após uso
-- 🔒 **Seguro**: IP whitelist + Session tokens + API keys
-- 💰 **Econômico**: Paga apenas pelo tempo de processamento
+### Arquitetura em 2 Camadas
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    CLIENTE                              │
+│  (Sua aplicação, Postman, cURL, etc.)                  │
+└────────────────────┬────────────────────────────────────┘
+                     │ HTTP POST
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│               ORCHESTRATOR (VPS)                        │
+│  • Easypanel / PM2                                      │
+│  • Node.js + Express                                    │
+│  • Valida requisições                                   │
+│  • Envia jobs para RunPod                               │
+│  • Retorna resultados                                   │
+└────────────────────┬────────────────────────────────────┘
+                     │ RunPod API
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│              RUNPOD SERVERLESS                          │
+│  • Auto-scaling: 0-3 workers                            │
+│  • GPU: RTX 3080/4090                                   │
+│  • Timeout: 10 minutos                                  │
+│  • Idle timeout: 5 minutos                              │
+└────────────────────┬────────────────────────────────────┘
+                     │ Job assigned
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│                WORKER (Docker)                          │
+│  • Base: nvidia/cuda:12.1.0                             │
+│  • FFmpeg + NVENC (h264_nvenc)                          │
+│  • Node.js 20                                           │
+│  • Processa vídeos em batch paralelo                    │
+│  • Retorna URLs dos vídeos processados                  │
+└─────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## 🏗️ Arquitetura
 
-```
-┌─────────────┐
-│   Cliente   │
-└──────┬──────┘
-       │ POST /video/caption
-       ▼
-┌─────────────────────────────────┐
-│  VPS (Easypanel)                │
-│  Orchestrator                   │
-│  - Recebe requisições           │
-│  - Gerencia Vast.ai             │
-│  - Faz proxy para GPU           │
-└──────┬──────────────────────────┘
-       │ 1. Busca GPU
-       │ 2. Cria instância
-       │ 3. Aguarda (20s)
-       ▼
-┌─────────────────────────────────┐
-│  Vast.ai (GPU RTX 3060)         │
-│  Worker (Docker)                │
-│  - FFmpeg + CUDA                │
-│  - Processa vídeos              │
-│  - Retorna resultado            │
-└──────┬──────────────────────────┘
-       │ 4. Processa (60-300s)
-       │ 5. Retorna resultado
-       ▼
-┌─────────────────────────────────┐
-│  VPS (Orchestrator)             │
-│  - Destrói GPU                  │
-│  - Retorna ao cliente           │
-└─────────────────────────────────┘
-```
-
-### Estrutura do Repositório
+### Estrutura do Projeto (Monorepo)
 
 ```
 api-gpu/
 ├── src/
-│   ├── orchestrator/          # Roda na VPS (Easypanel)
-│   │   ├── services/
-│   │   │   ├── vastAiService.ts       # Gerencia Vast.ai API
-│   │   │   └── instanceManager.ts     # Pool de instâncias
+│   ├── orchestrator/              # Roda na VPS (sempre ativo)
+│   │   ├── index.ts               # Entry point Express
 │   │   ├── routes/
-│   │   │   └── videoProxy.ts          # Proxy para GPU
-│   │   ├── config/
-│   │   │   └── env.ts                 # Configurações
-│   │   └── index.ts                   # Entry point
+│   │   │   └── videoProxy.ts      # Endpoints REST
+│   │   └── services/
+│   │       └── runpodService.ts   # RunPod API client
 │   │
-│   ├── worker/                # Roda no Vast.ai (GPU)
-│   │   ├── services/
-│   │   │   ├── ffmpegService.ts       # Processamento de vídeo
-│   │   │   └── gpuDetectionService.ts # Detecção de GPU
-│   │   ├── routes/
-│   │   │   └── video.ts               # Endpoints de vídeo
-│   │   ├── middleware/
-│   │   │   ├── auth.ts                # Autenticação
-│   │   │   ├── ipWhitelist.ts         # IP filtering
-│   │   │   └── sessionAuth.ts         # Session tokens
-│   │   └── index.ts                   # Entry point
+│   ├── worker/                    # Roda no RunPod (on-demand)
+│   │   ├── index.ts               # Entry point HTTP server
+│   │   └── services/
+│   │       └── ffmpegService.ts   # FFmpeg + GPU processing
 │   │
-│   └── shared/                # Código compartilhado
+│   └── shared/                    # Código compartilhado
 │       ├── types/
-│       │   └── index.ts               # Interfaces TypeScript
-│       ├── utils/
-│       │   └── logger.ts              # Winston logger
-│       └── middleware/
-│           └── validation.ts          # Joi schemas
+│       │   └── index.ts           # TypeScript interfaces
+│       └── utils/
+│           └── logger.ts          # Winston logger
 │
 ├── docker/
-│   ├── orchestrator.Dockerfile        # VPS image
-│   └── worker.Dockerfile              # GPU image (Docker Hub)
+│   └── worker.Dockerfile          # Worker image (RunPod)
 │
-├── docs/
-│   ├── DEPLOY_EASYPANEL.md           # Guia deploy VPS
-│   ├── DEPLOY_VAST.md                # Guia Vast.ai
-│   └── API.md                        # Documentação API
-│
+├── Dockerfile                     # Orchestrator (VPS/Easypanel)
 ├── package.json
 ├── tsconfig.json
 ├── tsconfig.orchestrator.json
-├── tsconfig.worker.json
-├── .env.example
-├── .gitignore
-└── README.md
+└── .env.example
+```
+
+### Fluxo de Processamento
+
+**1. Cliente envia requisição:**
+```bash
+POST /video/img2vid
+{
+  "images": [
+    { "id": "1", "image_url": "https://...", "duracao": 6.5 }
+  ]
+}
+```
+
+**2. Orchestrator:**
+- Valida API key
+- Envia job para RunPod endpoint
+- RunPod cria worker (se necessário) ou reutiliza existente
+- Aguarda conclusão do job
+
+**3. Worker (RunPod Serverless):**
+- Recebe array de imagens
+- Processa em batches paralelos (3 imagens simultâneas)
+- FFmpeg com NVENC GPU encoding (24fps fixo)
+- Retorna array de vídeos com mesmos IDs
+
+**4. Orchestrator:**
+- Recebe resultado do RunPod
+- Retorna ao cliente
+- Worker entra em idle (5min timeout)
+
+---
+
+## ✨ Funcionalidades
+
+### 🎬 Caption (Legendas)
+Adiciona legendas SRT a vídeos com GPU encoding
+
+**Exemplo:**
+```bash
+curl -X POST http://your-server/video/caption \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_srt": "https://example.com/subtitles.srt"
+  }'
+```
+
+**Response:**
+```json
+{
+  "code": 200,
+  "message": "Video caption added successfully",
+  "video_url": "/tmp/output/job_xxx_captioned.mp4",
+  "execution": {
+    "startTime": "2025-10-02T10:00:00.000Z",
+    "endTime": "2025-10-02T10:01:30.000Z",
+    "durationMs": 90000,
+    "durationSeconds": 90
+  },
+  "stats": {
+    "jobId": "runpod-job-xyz",
+    "delayTime": 500,
+    "executionTime": 89500
+  }
+}
 ```
 
 ---
 
-## ⚙️ Como Funciona
+### 🖼️ Img2Vid (Imagem para Vídeo em Batch)
 
-### 1. Fluxo de uma Requisição
+**Converte múltiplas imagens em vídeos com efeito Ken Burns (zoom) em paralelo**
 
+**Características:**
+- ✅ **Batch processing**: Processa múltiplas imagens de uma vez
+- ✅ **Paralelo**: 3 imagens simultâneas (configurável)
+- ✅ **Framerate fixo**: 24fps
+- ✅ **Ken Burns effect**: Zoom de 32.4%
+- ✅ **GPU encoding**: h264_nvenc para performance
+
+**Exemplo:**
 ```bash
-# Cliente faz requisição
-curl -X POST https://sua-vps.com/video/caption \
-  -H "X-API-Key: sua-chave" \
-  -d '{"url_video": "...", "url_srt": "..."}'
-
-# VPS (Orchestrator)
-→ Valida API key
-→ Busca GPU disponível no Vast.ai (RTX 3060, $0.20/h)
-→ Cria instância com Docker image do Worker
-→ Aguarda 20 segundos (pull + inicialização)
-→ Obtém IP:porta da instância (ex: 85.10.218.46:43210)
-
-# GPU (Worker)
-→ Recebe requisição do Orchestrator
-→ Valida IP whitelist + Session token
-→ Baixa vídeo e SRT
-→ Processa com FFmpeg + NVENC (GPU)
-→ Retorna vídeo processado
-
-# VPS (Orchestrator)
-→ Recebe resultado
-→ Destrói instância GPU
-→ Retorna ao cliente
-
-# Total: 20s setup + 60-300s processamento
-# Custo: $0.002 - $0.017 por vídeo
+curl -X POST http://your-server/video/img2vid \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "images": [
+      {
+        "id": "img-1",
+        "image_url": "https://example.com/image1.jpg",
+        "duracao": 6.48
+      },
+      {
+        "id": "img-2",
+        "image_url": "https://example.com/image2.jpg",
+        "duracao": 5.0
+      },
+      {
+        "id": "img-3",
+        "image_url": "https://example.com/image3.jpg",
+        "duracao": 8.22
+      }
+    ]
+  }'
 ```
 
-### 2. Por que 1 Repositório?
+**Response:**
+```json
+{
+  "code": 200,
+  "message": "Images converted to videos successfully",
+  "videos": [
+    {
+      "id": "img-1",
+      "video_url": "/tmp/output/job_xxx_video.mp4"
+    },
+    {
+      "id": "img-2",
+      "video_url": "/tmp/output/job_yyy_video.mp4"
+    },
+    {
+      "id": "img-3",
+      "video_url": "/tmp/output/job_zzz_video.mp4"
+    }
+  ],
+  "execution": {
+    "startTime": "2025-10-02T10:00:00.000Z",
+    "endTime": "2025-10-02T10:02:15.000Z",
+    "durationMs": 135000,
+    "durationSeconds": 135
+  },
+  "stats": {
+    "jobId": "runpod-job-abc",
+    "total": 3,
+    "processed": 3
+  }
+}
+```
 
-**Vantagens:**
-- ✅ **Código compartilhado**: Types, utils, middleware
-- ✅ **Versionamento sincronizado**: Mudanças em tipos afetam ambos
-- ✅ **Build único**: Um `npm install`, um `git clone`
-- ✅ **Manutenção simples**: Uma PR, um deploy
-- ✅ **Monorepo TypeScript**: Imports diretos `../../shared/types`
-
-**Separação:**
-- 📦 **2 builds independentes**: `orchestrator` e `worker`
-- 🐳 **2 Dockerfiles**: VPS e GPU
-- 🚀 **2 deploys**: Easypanel (orchestrator) + Docker Hub (worker)
+**Detalhes Técnicos:**
+- **Upscale**: 6720x3840 (6x) para qualidade do zoom
+- **Zoompan**: Fórmula `min(1+0.324*on/totalFrames, 1.324)`
+- **Output**: 1920x1080 @ 24fps
+- **Codec**: h264_nvenc (GPU)
+- **Preset**: p4 (balanced)
+- **Quality**: CQ 23 (VBR)
 
 ---
 
-## 🚀 Instalação
+### 🎵 AddAudio (Adicionar Áudio)
 
-### Pré-requisitos
+Adiciona ou substitui áudio em vídeo, cortando para a duração mais curta
 
-- Node.js 20+
-- Docker + Docker Hub account
-- Conta Vast.ai (https://vast.ai)
-- Easypanel (VPS)
+**Exemplo:**
+```bash
+curl -X POST http://your-server/video/addaudio \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_audio": "https://example.com/audio.mp3"
+  }'
+```
 
-### 1. Clone e Instale
+**Response:**
+```json
+{
+  "code": 200,
+  "message": "Video addaudio completed successfully",
+  "video_url": "/tmp/output/job_xxx_with_audio.mp4",
+  "execution": {
+    "startTime": "2025-10-02T10:00:00.000Z",
+    "endTime": "2025-10-02T10:01:00.000Z",
+    "durationMs": 60000,
+    "durationSeconds": 60
+  },
+  "stats": {
+    "jobId": "runpod-job-def"
+  }
+}
+```
+
+---
+
+## 🚀 Início Rápido
+
+### 1. Clone o Repositório
 
 ```bash
-git clone https://github.com/seu-usuario/api-gpu.git
+git clone https://github.com/FresHHerB/api-gpu.git
 cd api-gpu
+```
 
-# Instalar dependências
+### 2. Instale Dependências
+
+```bash
 npm install
+```
 
-# Copiar .env
+### 3. Configure Variáveis de Ambiente
+
+```bash
 cp .env.example .env
-
-# Editar .env com suas credenciais
 nano .env
 ```
 
-### 2. Configure Variáveis
-
+**Configuração mínima (.env):**
 ```bash
-# .env
+# RunPod Configuration
+RUNPOD_API_KEY=your-runpod-api-key-here
+RUNPOD_ENDPOINT_ID=your-endpoint-id-here
+RUNPOD_IDLE_TIMEOUT=300
+RUNPOD_MAX_TIMEOUT=600
 
-# Orchestrator (VPS)
+# Orchestrator Configuration
 PORT=3000
 NODE_ENV=production
-X_API_KEY=sua-chave-publica-clientes
+X_API_KEY=your-secure-api-key-here
 
-# Vast.ai
-VAST_API_KEY=xxxxxxxxx  # De https://vast.ai/console/cli/
-VAST_WORKER_IMAGE=seuusuario/api-gpu-worker:latest
+# Logging
+LOG_LEVEL=info
+LOGS_DIR=./logs
 
-# Comunicação interna
-GPU_API_KEY=chave-secreta-compartilhada
+# CORS
+CORS_ALLOW_ORIGINS=*
 ```
 
-### 3. Build Local (Desenvolvimento)
+### 4. Build e Run Local (Desenvolvimento)
 
 ```bash
-# Build orchestrator + worker
-npm run build
+# Build orchestrator
+npm run build:orchestrator
 
-# Rodar orchestrator (simula VPS)
-npm run dev:orchestrator
+# Run orchestrator
+npm run start:orchestrator
+```
 
-# Rodar worker (simula GPU) - em outro terminal
-npm run dev:worker
+**Output esperado:**
+```
+🚀 Orchestrator started {
+  "port": 3000,
+  "env": "development",
+  "pid": 12345
+}
+📡 Endpoints: http://0.0.0.0:3000
+```
+
+### 5. Teste a API
+
+```bash
+# Health check
+curl http://localhost:3000/health
+
+# Testar img2vid
+curl -X POST http://localhost:3000/video/img2vid \
+  -H "X-API-Key: your-secure-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "images": [
+      {
+        "id": "test-1",
+        "image_url": "https://picsum.photos/1920/1080",
+        "duracao": 5.0
+      }
+    ]
+  }'
+```
+
+---
+
+## 📡 API Reference
+
+### Base URL
+```
+Production: https://your-domain.com
+Development: http://localhost:3000
+```
+
+### Autenticação
+Todas as requisições (exceto `/health`) requerem header:
+```
+X-API-Key: your-api-key
+```
+
+### Endpoints
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/health` | Health check (sem auth) |
+| GET | `/` | Info da API |
+| POST | `/video/caption` | Adicionar legendas SRT |
+| POST | `/video/img2vid` | Converter imagens em vídeos (batch) |
+| POST | `/video/addaudio` | Adicionar/substituir áudio |
+| GET | `/runpod/health` | Status do RunPod endpoint |
+| GET | `/runpod/config` | Configuração do RunPod |
+| GET | `/job/:jobId` | Status de um job específico |
+| POST | `/job/:jobId/cancel` | Cancelar job em execução |
+
+### Tipos TypeScript
+
+```typescript
+// Caption Request
+interface CaptionRequest {
+  url_video: string;
+  url_srt: string;
+}
+
+// Img2Vid Request (Batch)
+interface Img2VidImage {
+  id: string;
+  image_url: string;
+  duracao: number; // segundos
+}
+
+interface Img2VidRequest {
+  images: Img2VidImage[];
+  // framerate is fixed at 24fps
+}
+
+// AddAudio Request
+interface AddAudioRequest {
+  url_video: string;
+  url_audio: string;
+}
+
+// Generic Video Response
+interface VideoResponse {
+  code: number;
+  message: string;
+  video_url: string;
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: Record<string, any>;
+}
+
+// Img2Vid Response (Batch)
+interface Img2VidResponse {
+  code: number;
+  message: string;
+  videos: Array<{
+    id: string;
+    video_url: string;
+  }>;
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: {
+    jobId: string;
+    total: number;
+    processed: number;
+  };
+}
 ```
 
 ---
 
 ## 🐳 Deploy
 
-### Deploy é feito em 2 partes:
+### Pré-requisitos
 
-1. **Worker (GPU)** → Docker Hub (uma vez)
-2. **Orchestrator (VPS)** → Easypanel (sempre ativo)
+1. **RunPod Account**: https://runpod.io
+2. **Docker Hub Account**: https://hub.docker.com
+3. **VPS com Docker** (Easypanel, DigitalOcean, Hetzner, etc.)
 
 ---
 
-### Parte 1: Build e Publicar Worker (Docker Hub)
+### Parte 1: Deploy Worker no RunPod
+
+#### 1.1 Build e Push Worker Image
 
 ```bash
 # 1. Login no Docker Hub
 docker login
 
-# 2. Build da imagem worker
-npm run docker:build:worker
+# 2. Build worker image
+docker build -f docker/worker.Dockerfile -t your-dockerhub-user/api-gpu-worker:latest .
 
-# 3. Push para Docker Hub (público ou privado)
-npm run docker:push:worker
-
-# Pronto! Vast.ai agora pode puxar essa imagem
+# 3. Push para Docker Hub
+docker push your-dockerhub-user/api-gpu-worker:latest
 ```
 
-**Imagem gerada:**
-- Nome: `seuusuario/api-gpu-worker:latest`
-- Tamanho: ~5GB (PyTorch + CUDA + FFmpeg + Node)
-- Conteúdo: Worker + Shared
-- Base: `nvcr.io/nvidia/pytorch:24.10-py3`
+#### 1.2 Criar Template no RunPod
+
+Acesse RunPod Console → Templates → New Template
+
+**Configuração:**
+```yaml
+Template Name: api-gpu-worker
+Container Image: your-dockerhub-user/api-gpu-worker:latest
+Docker Command: (deixe vazio, usa CMD do Dockerfile)
+
+Container Disk: 10 GB
+Expose HTTP Ports: 8080
+Expose TCP Ports: (vazio)
+
+Environment Variables:
+  PORT: 8080
+  NODE_ENV: production
+  WORK_DIR: /tmp/work
+  OUTPUT_DIR: /tmp/output
+  BATCH_SIZE: 3
+```
+
+#### 1.3 Criar Endpoint no RunPod
+
+RunPod Console → Serverless → New Endpoint
+
+**Configuração:**
+```yaml
+Endpoint Name: api-gpu-endpoint
+Template: api-gpu-worker (criado acima)
+
+GPUs: RTX 3080, RTX 4090 (ou conforme budget)
+Workers:
+  Min: 0
+  Max: 3
+Idle Timeout: 300 (5 minutos)
+Execution Timeout: 600 (10 minutos)
+FlashBoot: Enabled
+```
+
+**Após criação, copie:**
+- Endpoint ID: `xxxxxxxxx`
+- Use isso no `.env` → `RUNPOD_ENDPOINT_ID`
+
+#### 1.4 Obter RunPod API Key
+
+RunPod Console → Settings → API Keys → Create API Key
+
+Copie a chave e adicione em `.env`:
+```
+RUNPOD_API_KEY=your-runpod-api-key
+```
 
 ---
 
-### Parte 2: Deploy Orchestrator no Easypanel
+### Parte 2: Deploy Orchestrator na VPS
 
-#### Opção A: Via Dockerfile (Recomendado)
+#### Opção A: Easypanel (Recomendado)
 
-1. **No Easypanel:**
-   - Criar novo App
-   - Nome: `api-gpu-orchestrator`
-   - Source: Git Repository
+**1. Criar Serviço:**
+- App Type: Github
+- Repository: `https://github.com/FresHHerB/api-gpu`
+- Branch: `main`
+- Build Type: Dockerfile
+- Dockerfile Path: `./Dockerfile` (raiz do projeto)
 
-2. **Configurar:**
-   ```yaml
-   Git URL: https://github.com/seu-usuario/api-gpu.git
-   Branch: main
-   Dockerfile: docker/orchestrator.Dockerfile
-   Port: 3000
-   ```
+**2. Configurar Environment Variables:**
+```bash
+RUNPOD_API_KEY=your-runpod-api-key
+RUNPOD_ENDPOINT_ID=your-endpoint-id
+RUNPOD_IDLE_TIMEOUT=300
+RUNPOD_MAX_TIMEOUT=600
+PORT=3000
+NODE_ENV=production
+X_API_KEY=your-secure-client-api-key
+LOG_LEVEL=info
+LOGS_DIR=./logs
+CORS_ALLOW_ORIGINS=*
+```
 
-3. **Variáveis de Ambiente:**
-   ```bash
-   PORT=3000
-   NODE_ENV=production
-   X_API_KEY=sua-chave-publica
-   VAST_API_KEY=xxxxxxxx
-   VAST_WORKER_IMAGE=seuusuario/api-gpu-worker:latest
-   GPU_API_KEY=chave-secreta-compartilhada
-   ```
+**3. Deploy:**
+- Port Mapping: `3000:3000`
+- Click "Deploy"
+- Aguarde build (~2min)
 
-4. **Deploy:**
-   - Clique em "Deploy"
-   - Aguarde build (~2min)
-   - Acesse em `https://api-gpu-orchestrator.seu-dominio.com`
+**4. Verificar:**
+```bash
+curl https://your-domain.com/health
+```
 
-#### Opção B: Via Build Manual
+#### Opção B: PM2 Manual
 
 ```bash
-# No servidor (SSH)
-git clone https://github.com/seu-usuario/api-gpu.git
+# 1. SSH na VPS
+ssh root@your-vps-ip
+
+# 2. Clone repo
+cd /root
+git clone https://github.com/FresHHerB/api-gpu.git
 cd api-gpu
 
+# 3. Instalar dependências
 npm install
+
+# 4. Criar .env
+nano .env
+# (copie as variáveis acima)
+
+# 5. Build
 npm run build:orchestrator
 
-# Rodar com PM2
-pm2 start dist/orchestrator/index.js --name orchestrator
+# 6. Instalar PM2
+npm install -g pm2
+
+# 7. Criar ecosystem.config.js
+cat > ecosystem.config.js << 'EOF'
+module.exports = {
+  apps: [{
+    name: 'api-gpu-orchestrator',
+    script: 'dist/orchestrator/index.js',
+    instances: 1,
+    exec_mode: 'fork',
+    env: {
+      NODE_ENV: 'production'
+    },
+    error_file: 'logs/pm2-error.log',
+    out_file: 'logs/pm2-out.log',
+    log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+    autorestart: true,
+    max_restarts: 10,
+    min_uptime: '10s'
+  }]
+}
+EOF
+
+# 8. Iniciar com PM2
+mkdir -p logs
+pm2 start ecosystem.config.js
 pm2 save
+pm2 startup
+
+# 9. Configurar firewall
+ufw allow 3000/tcp
+ufw reload
+
+# 10. Verificar
+pm2 logs
+curl http://localhost:3000/health
 ```
 
 ---
 
-## 📡 Uso
+## ⚙️ Configuração
 
-### 1. Health Check
+### Variáveis de Ambiente
 
-```bash
-curl https://sua-vps.com/health
+#### Orchestrator (VPS)
 
-# Response:
-{
-  "status": "healthy",
-  "service": "AutoDark Orchestrator",
-  "timestamp": "2025-10-01T12:00:00.000Z"
-}
+| Variável | Descrição | Padrão | Obrigatório |
+|----------|-----------|--------|-------------|
+| `PORT` | Porta HTTP | `3000` | Não |
+| `NODE_ENV` | Ambiente | `production` | Não |
+| `X_API_KEY` | API key para clientes | - | Sim |
+| `RUNPOD_API_KEY` | RunPod API key | - | Sim |
+| `RUNPOD_ENDPOINT_ID` | RunPod endpoint ID | - | Sim |
+| `RUNPOD_IDLE_TIMEOUT` | Idle timeout (s) | `300` | Não |
+| `RUNPOD_MAX_TIMEOUT` | Max timeout (s) | `600` | Não |
+| `LOG_LEVEL` | Log level | `info` | Não |
+| `LOGS_DIR` | Diretório de logs | `./logs` | Não |
+| `CORS_ALLOW_ORIGINS` | CORS origins | `*` | Não |
+
+#### Worker (RunPod)
+
+| Variável | Descrição | Padrão | Obrigatório |
+|----------|-----------|--------|-------------|
+| `PORT` | Porta HTTP | `8080` | Não |
+| `NODE_ENV` | Ambiente | `production` | Não |
+| `WORK_DIR` | Dir de trabalho | `/tmp/work` | Não |
+| `OUTPUT_DIR` | Dir de output | `/tmp/output` | Não |
+| `BATCH_SIZE` | Imagens em paralelo | `3` | Não |
+| `LOG_LEVEL` | Log level | `info` | Não |
+
+### Ajustar Batch Size
+
+**No Template RunPod**, adicione env var:
+```
+BATCH_SIZE=5
 ```
 
-### 2. Processar Vídeo com Caption
+Isso processará 5 imagens simultaneamente (consome mais VRAM).
 
-```bash
-curl -X POST https://sua-vps.com/video/caption \
-  -H "X-API-Key: sua-chave" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url_video": "https://example.com/video.mp4",
-    "url_srt": "https://example.com/subtitles.srt"
-  }'
-
-# Response (após ~80s):
-{
-  "code": 200,
-  "message": "Video caption added successfully",
-  "video_url": "http://85.10.218.46:43210/output/captioned-123.mp4",
-  "execution": {
-    "durationSeconds": 75.2
-  }
-}
-```
-
-### 3. Converter Imagem em Vídeo
-
-```bash
-curl -X POST https://sua-vps.com/video/img2vid \
-  -H "X-API-Key: sua-chave" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url_image": "https://example.com/image.jpg",
-    "frame_rate": 24,
-    "duration": 5.0
-  }'
-```
-
----
-
-## 🔧 Configuração
-
-### Vast.ai - Obter API Key
-
-1. Acesse https://vast.ai/console/cli/
-2. Copie o comando `vastai set api-key xxxxxxx`
-3. Copie apenas a chave (depois de `api-key`)
-4. Cole em `.env` → `VAST_API_KEY=xxxxxxx`
-
-### Docker Hub - Publicar Imagem
-
-```bash
-# 1. Criar conta em https://hub.docker.com
-# 2. Criar repositório: api-gpu-worker (público)
-# 3. Login
-docker login -u seuusuario
-
-# 4. Build e push
-npm run docker:build:worker
-npm run docker:push:worker
-```
-
-### Configurações de Segurança
-
-**Orchestrator:**
-- `X_API_KEY`: Chave pública para clientes externos
-- `GPU_API_KEY`: Chave secreta compartilhada (Orchestrator ↔ Worker)
-
-**Worker:**
-- `ALLOWED_IPS`: IP da VPS (injetado automaticamente)
-- `SESSION_TOKEN`: Token único por instância (gerado dinamicamente)
-- `X_API_KEY`: Mesma chave do Orchestrator
+**Recomendações:**
+- RTX 3080 (10GB): `BATCH_SIZE=3`
+- RTX 4090 (24GB): `BATCH_SIZE=6`
 
 ---
 
 ## 💻 Desenvolvimento
 
-### Scripts Disponíveis
+### Scripts NPM
 
 ```bash
-# Desenvolvimento
-npm run dev:orchestrator    # Roda VPS localmente
-npm run dev:worker         # Roda GPU localmente
-
 # Build
-npm run build              # Build completo
-npm run build:orchestrator # Build apenas orchestrator
-npm run build:worker       # Build apenas worker
+npm run build                 # Build completo
+npm run build:orchestrator    # Build apenas orchestrator
+npm run build:worker          # Build apenas worker
 
-# Docker
-npm run docker:build:worker    # Build imagem worker
-npm run docker:push:worker     # Push para Docker Hub
-npm run docker:build:orchestrator  # Build imagem orchestrator
+# Dev
+npm run dev:orchestrator      # Dev mode orchestrator
+npm run dev:worker            # Dev mode worker
 
-# Produção
-npm run start:orchestrator  # Roda orchestrator (VPS)
-npm run start:worker       # Roda worker (GPU)
+# Start (Production)
+npm run start:orchestrator    # Rodar orchestrator compilado
+npm run start:worker          # Rodar worker compilado
+
+# Lint
+npm run lint
 ```
 
 ### Estrutura de Imports
 
 ```typescript
-// Orchestrator pode importar Shared
-import { VideoRequest } from '../../shared/types';
+// ✅ Correto: Shared pode ser importado por todos
 import { logger } from '../../shared/utils/logger';
+import { CaptionRequest } from '../../shared/types';
 
-// Worker pode importar Shared
-import { FFmpegService } from './services/ffmpegService';
-import { logger } from '../../shared/utils/logger';
+// ❌ Errado: Worker não pode importar Orchestrator
+import { RunPodService } from '../../orchestrator/services/runpodService'; // ERROR
 
-// Shared NÃO importa Orchestrator ou Worker
+// ❌ Errado: Orchestrator não pode importar Worker
+import { FFmpegService } from '../../worker/services/ffmpegService'; // ERROR
 ```
 
 ### Adicionar Novo Endpoint
 
-1. **Criar tipo em `shared/types/index.ts`:**
+**1. Definir tipo em `src/shared/types/index.ts`:**
 ```typescript
-export interface NewFeatureRequest {
+export interface MyNewRequest {
   param1: string;
   param2: number;
 }
 ```
 
-2. **Implementar no Worker `worker/routes/video.ts`:**
+**2. Implementar no Worker `src/worker/index.ts`:**
 ```typescript
-router.post('/video/newfeature', authenticateToken, async (req, res) => {
-  // Lógica de processamento
+app.post('/video/mynew', async (req, res) => {
+  const { param1, param2 } = req.body as MyNewRequest;
+  // Implementação...
+  res.json({ success: true });
 });
 ```
 
-3. **Adicionar proxy no Orchestrator `orchestrator/routes/videoProxy.ts`:**
+**3. Adicionar rota no Orchestrator `src/orchestrator/routes/videoProxy.ts`:**
 ```typescript
-router.post('/video/newfeature', authenticateToken, (req, res) =>
-  handleVideoProcessing(req, res, 'newfeature')
-);
+router.post('/video/mynew', authenticateApiKey, async (req, res) => {
+  const data: MyNewRequest = req.body;
+  const result = await runpodService.processVideo('mynew', data);
+  res.json(result);
+});
+```
+
+**4. Rebuild e Deploy:**
+```bash
+# Rebuild worker
+docker build -f docker/worker.Dockerfile -t user/api-gpu-worker:latest .
+docker push user/api-gpu-worker:latest
+
+# Update RunPod template
+
+# Rebuild orchestrator
+npm run build:orchestrator
+pm2 restart api-gpu-orchestrator
 ```
 
 ---
 
-## 📊 Custos Estimados
+## 💰 Custos
 
-### Vast.ai GPU Pricing
+### RunPod Serverless Pricing
 
-| GPU | VRAM | Preço/hora | Setup | Processar 1min vídeo | Total/vídeo |
-|-----|------|------------|-------|---------------------|-------------|
-| RTX 3060 | 12GB | $0.20 | 20s | 60s | $0.004 |
-| RTX 3080 | 10GB | $0.35 | 20s | 40s | $0.006 |
-| RTX 4090 | 24GB | $0.80 | 20s | 25s | $0.010 |
+**Modelo de cobrança:** Pay-per-second (only when running)
 
-**Exemplo (RTX 3060):**
-- Setup: 20s = $0.001
-- Processar: 60s = $0.003
-- **Total: $0.004/vídeo**
+| GPU | VRAM | Custo/min | Setup | Processar 3 imgs (batch) | Total |
+|-----|------|-----------|-------|--------------------------|-------|
+| RTX 3080 | 10GB | $0.01 | 10s | 45s | $0.009 |
+| RTX 4090 | 24GB | $0.03 | 10s | 25s | $0.018 |
 
-### VPS (Easypanel) - Sempre Ativo
+**Exemplo (RTX 3080, 100 jobs/dia):**
+- Setup: 10s × 100 = 16min = $0.16
+- Processing: 45s × 100 = 75min = $0.75
+- **Total: $0.91/dia = $27/mês**
 
+**Vantagens:**
+- ✅ Zero custo em idle (sem jobs)
+- ✅ Auto-scaling incluso
+- ✅ Sem taxa de setup de VM
+
+### VPS (Orchestrator) - Sempre Ativo
+
+**Requisitos mínimos:**
 - CPU: 1 core
 - RAM: 512MB
 - Storage: 10GB
-- **Custo: $3-5/mês**
+- **Custo: $3-5/mês** (DigitalOcean, Hetzner, etc.)
 
-**Custo total:** VPS fixo + GPU on-demand
+### Custo Total Estimado
+
+**Baixo volume (10 jobs/dia):**
+- VPS: $4/mês
+- RunPod: $2.70/mês
+- **Total: ~$7/mês**
+
+**Alto volume (1000 jobs/dia):**
+- VPS: $4/mês
+- RunPod: $270/mês
+- **Total: ~$274/mês**
 
 ---
 
@@ -493,75 +819,132 @@ router.post('/video/newfeature', authenticateToken, (req, res) =>
 
 ### Camadas de Proteção
 
-1. **Orchestrator:**
-   - API Key validation
-   - Rate limiting
-   - CORS configured
+**1. Orchestrator (VPS):**
+- ✅ API Key validation (X-API-Key header)
+- ✅ CORS configurável
+- ✅ Rate limiting (configurável)
+- ✅ Request validation (Joi schemas)
 
-2. **Worker:**
-   - IP Whitelist (apenas VPS)
-   - Session Token (único por instância)
-   - API Key validation
+**2. Worker (RunPod):**
+- ✅ Isolamento de rede (RunPod managed)
+- ✅ Ephemeral instances (destruídas após idle)
+- ✅ Sem dados persistentes
 
-3. **Vast.ai:**
-   - Instâncias efêmeras (vida curta)
-   - Sem dados sensíveis armazenados
+**3. Comunicação:**
+- ✅ HTTPS recomendado (via Easypanel/Nginx)
+- ✅ RunPod API usa HTTPS
+
+### Boas Práticas
+
+```bash
+# 1. Gerar API key forte
+openssl rand -hex 32
+
+# 2. Configurar CORS específico
+CORS_ALLOW_ORIGINS=https://yourapp.com,https://admin.yourapp.com
+
+# 3. Rate limiting
+# Adicionar em src/orchestrator/index.ts:
+import rateLimit from 'express-rate-limit';
+
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutos
+  max: 100 // 100 requests por IP
+});
+
+app.use('/video/', limiter);
+
+# 4. Firewall na VPS
+ufw allow 3000/tcp
+ufw allow 22/tcp
+ufw enable
+```
 
 ---
 
 ## 🐛 Troubleshooting
 
-### Worker não inicia no Vast.ai
+### Worker não inicia no RunPod
 
+**Verificar logs:**
 ```bash
-# Verificar logs da instância
-vastai ssh-url <instance_id>
-ssh -p PORT root@IP
-docker logs <container_id>
+# RunPod Console → Serverless → seu endpoint → Logs
+# Ou via API:
+curl -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  https://api.runpod.ai/v2/<endpoint-id>/status/<job-id>
 ```
 
-### Orchestrator não encontra GPU
+**Problemas comuns:**
+- Docker image não encontrada → Verificar se push foi feito
+- Port incorreto → Deve ser 8080
+- CUDA error → Verificar se template tem GPU selecionada
 
+### Orchestrator não envia jobs
+
+**Debug:**
 ```bash
-# Verificar API key Vast.ai
-curl -H "Authorization: Bearer $VAST_API_KEY" \
-  https://console.vast.ai/api/v0/bundles/
+# Verificar logs
+pm2 logs api-gpu-orchestrator
+
+# Testar API RunPod manualmente
+curl -X POST https://api.runpod.ai/v2/<endpoint-id>/run \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input": {"operation": "test"}}'
 ```
 
-### Timeout ao processar
+### Timeout de processamento
 
-- Aumentar timeout em `orchestrator/routes/videoProxy.ts`
-- Verificar se GPU tem VRAM suficiente
+**Aumentar timeouts:**
+```bash
+# .env
+RUNPOD_MAX_TIMEOUT=900  # 15 minutos
+
+# RunPod Console → Endpoint Settings
+Execution Timeout: 900
+```
+
+### Erros de memória (OOM)
+
+**Reduzir BATCH_SIZE:**
+```bash
+# Template RunPod env vars
+BATCH_SIZE=2  # Ao invés de 3
+```
 
 ---
 
-## 📚 Documentação Adicional
+## 📚 Recursos Adicionais
 
-- [Deploy no Easypanel](./docs/DEPLOY_EASYPANEL.md)
-- [Configurar Vast.ai](./docs/DEPLOY_VAST.md)
-- [API Reference](./docs/API.md)
+- [RunPod Docs](https://docs.runpod.io/serverless/overview)
+- [FFmpeg NVENC Guide](https://docs.nvidia.com/video-technologies/video-codec-sdk/ffmpeg-with-nvidia-gpu/)
+- [Easypanel Docs](https://easypanel.io/docs)
 
 ---
 
 ## 📝 Licença
 
-MIT
+MIT License - veja [LICENSE](LICENSE)
 
 ---
 
 ## 🤝 Contribuindo
 
+Contribuições são bem-vindas!
+
 1. Fork o projeto
 2. Crie uma branch (`git checkout -b feature/NovaFeature`)
-3. Commit (`git commit -m 'Add NovaFeature'`)
-4. Push (`git push origin feature/NovaFeature`)
+3. Commit suas mudanças (`git commit -m 'feat: Add NovaFeature'`)
+4. Push para a branch (`git push origin feature/NovaFeature`)
 5. Abra um Pull Request
 
 ---
 
 ## 📞 Suporte
 
-Para problemas e dúvidas:
-- Verifique os logs em `/logs`
-- Consulte a documentação em `/docs`
-- Abra uma issue no GitHub
+- **Issues**: https://github.com/FresHHerB/api-gpu/issues
+- **Logs**: Verifique `/logs` no orchestrator e RunPod console para workers
+
+---
+
+**Desenvolvido com ❤️ usando RunPod Serverless + FFmpeg NVENC**
