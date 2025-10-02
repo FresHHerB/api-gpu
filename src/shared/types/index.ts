@@ -11,10 +11,31 @@ export interface CaptionRequest {
   url_srt: string;
 }
 
+export interface Img2VidImage {
+  id: string;
+  image_url: string;
+  duracao: number; // duração em segundos
+}
+
 export interface Img2VidRequest {
-  url_image: string;
-  frame_rate: number;
-  duration: number;
+  images: Img2VidImage[];
+  // frame_rate is fixed at 24fps
+}
+
+export interface Img2VidResponse {
+  code: number;
+  message: string;
+  videos: Array<{
+    id: string;
+    video_url: string;
+  }>;
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: Record<string, any>;
 }
 
 export interface AddAudioRequest {
@@ -70,48 +91,6 @@ export interface RunPodEndpointConfig {
   maxTimeout?: number; // seconds (default: 600 = 10min)
 }
 
-// ============================================
-// Vast.ai Types (DEPRECATED - mantido para referência)
-// ============================================
-
-export interface VastOffer {
-  id: number;
-  gpu_name: string;
-  gpu_ram: number;
-  dph_total: number; // Price per hour
-  verification: string;
-  rentable: boolean;
-  num_gpus: number;
-  cuda_max_good: number;
-}
-
-export interface VastInstance {
-  id: number;
-  publicUrl: string;
-  sessionToken: string;
-  sshHost: string;
-  sshPort: string;
-  createdAt: Date;
-}
-
-export interface VastInstanceDetails {
-  id: number;
-  actual_status: string;
-  ssh_host: string;
-  ssh_port: string;
-  public_ipaddr: string;
-  ports: Record<string, Array<{ HostPort: string }>>;
-}
-
-// ============================================
-// GPU Requirements
-// ============================================
-
-export interface GPURequirements {
-  minVram?: number;
-  maxPrice?: number;
-  gpuModel?: string;
-}
 
 // ============================================
 // Error Types

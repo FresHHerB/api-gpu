@@ -86,31 +86,31 @@ export class FFmpegService {
   async imageToVideo(
     url_image: string,
     duration: number = 5.0,
-    frame_rate: number = 24
+    frame_rate: number = 24 // Fixed at 24fps
   ): Promise<string> {
     const jobId = this.generateJobId();
     const imagePath = path.join(this.workDir, `${jobId}_input.jpg`);
     const outputPath = path.join(this.outputDir, `${jobId}_video.mp4`);
 
     try {
-      logger.info('🖼️ Starting img2vid job', { jobId, url_image, duration, frame_rate });
+      logger.info('🖼️ Starting img2vid job', { jobId, url_image, duration });
 
       // 1. Download image
       await this.downloadFile(url_image, imagePath);
 
-      // 2. Calculate zoom parameters
-      const totalFrames = Math.floor(duration * frame_rate);
+      // 2. Calculate zoom parameters (fixed 24fps)
+      const totalFrames = Math.floor(duration * 24);
       const zoomFactor = 1.324; // 32.4% zoom
 
-      // 3. Process with FFmpeg + GPU
+      // 3. Process with FFmpeg + GPU (24fps fixed)
       // Ken Burns effect: Start zoomed in, zoom out over duration
       await this.runFFmpeg([
         '-loop', '1',
-        '-framerate', frame_rate.toString(),
+        '-framerate', '24',
         '-i', imagePath,
         '-vf', [
           `scale=6720:3840:flags=lanczos`,     // Upscale 6x for zoom quality
-          `zoompan=z='min(1+${zoomFactor-1}*on/${totalFrames},${zoomFactor})':d=${totalFrames}:s=1920x1080:fps=${frame_rate}`,
+          `zoompan=z='min(1+${zoomFactor-1}*on/${totalFrames},${zoomFactor})':d=${totalFrames}:s=1920x1080:fps=24`,
           'format=nv12'                         // GPU-friendly format
         ].join(','),
         '-c:v', 'h264_nvenc',                   // GPU encode
@@ -137,6 +137,109 @@ export class FFmpegService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Convert multiple images to videos (batch processing with parallelization)
+   * Frame rate is fixed at 24fps
+   * Processes images in parallel batches for better performance
+   */
+  async imagesToVideos(
+    images: Array<{ id: string; image_url: string; duracao: number }>
+  ): Promise<Array<{ id: string; video_path: string }>> {
+    const batchJobId = this.generateJobId();
+    const batchSize = parseInt(process.env.BATCH_SIZE || '3'); // Process 3 images in parallel by default
+
+    logger.info('🖼️ Starting batch img2vid job', {
+      batchJobId,
+      imageCount: images.length,
+      batchSize,
+      parallelProcessing: true
+    });
+
+    const results: Array<{ id: string; video_path: string }> = [];
+    const errors: Array<{ id: string; error: string }> = [];
+
+    // Process images in parallel batches
+    for (let i = 0; i < images.length; i += batchSize) {
+      const batch = images.slice(i, i + batchSize);
+      const batchNumber = Math.floor(i / batchSize) + 1;
+      const totalBatches = Math.ceil(images.length / batchSize);
+
+      logger.info(`📦 Processing batch ${batchNumber}/${totalBatches}`, {
+        batchSize: batch.length,
+        imageIds: batch.map(img => img.id)
+      });
+
+      // Process batch in parallel
+      const batchPromises = batch.map(async (image) => {
+        try {
+          const videoPath = await this.imageToVideo(
+            image.image_url,
+            image.duracao
+          );
+
+          logger.info(`✅ Processed image ${image.id}`, { videoPath });
+
+          return {
+            success: true,
+            id: image.id,
+            video_path: videoPath
+          };
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          logger.error(`❌ Failed to process image ${image.id}`, { error: errorMsg });
+
+          return {
+            success: false,
+            id: image.id,
+            error: errorMsg
+          };
+        }
+      });
+
+      // Wait for all images in this batch to complete
+      const batchResults = await Promise.all(batchPromises);
+
+      // Separate successes from errors
+      for (const result of batchResults) {
+        if (result.success) {
+          results.push({
+            id: result.id,
+            video_path: result.video_path!
+          });
+        } else {
+          errors.push({
+            id: result.id,
+            error: result.error!
+          });
+        }
+      }
+
+      logger.info(`✅ Batch ${batchNumber}/${totalBatches} completed`, {
+        successCount: batchResults.filter(r => r.success).length,
+        errorCount: batchResults.filter(r => !r.success).length
+      });
+    }
+
+    if (errors.length > 0) {
+      logger.warn('⚠️ Some images failed to process', {
+        errors,
+        successCount: results.length,
+        errorCount: errors.length
+      });
+    }
+
+    logger.info('✅ Batch img2vid completed', {
+      batchJobId,
+      totalImages: images.length,
+      successCount: results.length,
+      errorCount: errors.length,
+      batchSize,
+      totalBatches: Math.ceil(images.length / batchSize)
+    });
+
+    return results;
   }
 
   /**

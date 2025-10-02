@@ -18,7 +18,7 @@ const runpodService = new RunPodService();
 // Middleware: API Key Authentication
 // ============================================
 
-const authenticateApiKey = (req: Request, res: Response, next: Function) => {
+const authenticateApiKey = (req: Request, res: Response, next: Function): void => {
   const apiKey = req.get('X-API-Key');
   const expectedKey = process.env.X_API_KEY;
 
@@ -28,10 +28,11 @@ const authenticateApiKey = (req: Request, res: Response, next: Function) => {
       path: req.path
     });
 
-    return res.status(401).json({
+    res.status(401).json({
       error: 'Unauthorized',
       message: 'Invalid or missing API key'
     });
+    return;
   }
 
   next();
@@ -45,7 +46,7 @@ const authenticateApiKey = (req: Request, res: Response, next: Function) => {
  * POST /video/caption
  * Add SRT subtitles to video
  */
-router.post('/video/caption', authenticateApiKey, async (req: Request, res: Response) => {
+router.post('/video/caption', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
 
   try {
@@ -53,10 +54,11 @@ router.post('/video/caption', authenticateApiKey, async (req: Request, res: Resp
 
     // Validate request
     if (!data.url_video || !data.url_srt) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Bad Request',
         message: 'url_video and url_srt are required'
       });
+      return;
     }
 
     logger.info('📹 Caption request received', {
@@ -94,30 +96,38 @@ router.post('/video/caption', authenticateApiKey, async (req: Request, res: Resp
 
 /**
  * POST /video/img2vid
- * Convert image to video with zoom effect (Ken Burns)
+ * Convert images to videos with zoom effect (Ken Burns)
+ * Accepts array of images: [{ id, image_url, duracao }]
  */
-router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Response) => {
+router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
 
   try {
     const data: Img2VidRequest = req.body;
 
-    // Validate request
-    if (!data.url_image) {
-      return res.status(400).json({
+    // Validate request - expect images array
+    if (!data.images || !Array.isArray(data.images) || data.images.length === 0) {
+      res.status(400).json({
         error: 'Bad Request',
-        message: 'url_image is required'
+        message: 'images array is required with at least one image'
       });
+      return;
     }
 
-    // Set defaults
-    data.frame_rate = data.frame_rate || 24;
-    data.duration = data.duration || 5.0;
+    // Validate each image in the array
+    for (const img of data.images) {
+      if (!img.id || !img.image_url || !img.duracao) {
+        res.status(400).json({
+          error: 'Bad Request',
+          message: 'Each image must have id, image_url, and duracao'
+        });
+        return;
+      }
+    }
 
-    logger.info('🖼️ Img2Vid request received', {
-      url_image: data.url_image,
-      frame_rate: data.frame_rate,
-      duration: data.duration,
+    logger.info('🖼️ Img2Vid batch request received', {
+      imageCount: data.images.length,
+      images: data.images.map(i => ({ id: i.id, duracao: i.duracao })),
       ip: req.ip
     });
 
@@ -126,9 +136,10 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
 
     const durationMs = Date.now() - startTime;
 
-    logger.info('✅ Img2Vid completed', {
+    logger.info('✅ Img2Vid batch completed', {
       durationMs,
-      video_url: result.video_url
+      totalImages: result.stats?.total,
+      processedImages: result.stats?.processed
     });
 
     res.json(result);
@@ -152,7 +163,7 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
  * POST /video/addaudio
  * Synchronize audio with video
  */
-router.post('/video/addaudio', authenticateApiKey, async (req: Request, res: Response) => {
+router.post('/video/addaudio', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
   const startTime = Date.now();
 
   try {
@@ -160,10 +171,11 @@ router.post('/video/addaudio', authenticateApiKey, async (req: Request, res: Res
 
     // Validate request
     if (!data.url_video || !data.url_audio) {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'Bad Request',
         message: 'url_video and url_audio are required'
       });
+      return;
     }
 
     logger.info('🎵 AddAudio request received', {

@@ -33,21 +33,19 @@ RUN node --version && npm --version && ffmpeg -version
 # Diretório de trabalho
 WORKDIR /app
 
-# Copiar package.json primeiro (cache de camadas)
+# Copiar package.json e tsconfig primeiro (cache de camadas)
 COPY package*.json ./
-
-# Instalar todas as dependências (incluindo dev) para build
-RUN npm install
+COPY tsconfig.json ./
 
 # Copiar código worker + shared
 COPY src/worker ./src/worker
 COPY src/shared ./src/shared
 
-# Criar tsconfig inline para build (excluir handler.ts)
-RUN echo '{"compilerOptions":{"target":"ES2022","module":"commonjs","lib":["ES2022"],"outDir":"./dist","rootDir":"./src","strict":true,"esModuleInterop":true,"skipLibCheck":true,"forceConsistentCasingInFileNames":true,"resolveJsonModule":true,"moduleResolution":"node"},"include":["src/worker/**/*","src/shared/**/*"],"exclude":["src/worker/handler.ts"]}' > tsconfig.build.json
+# Instalar todas as dependências (incluindo dev) para build
+RUN npm install
 
-# Build do worker
-RUN npx tsc -p tsconfig.build.json
+# Build do worker usando tsconfig.json
+RUN npx tsc --project tsconfig.json
 
 # Remover dev dependencies após build
 RUN npm prune --production

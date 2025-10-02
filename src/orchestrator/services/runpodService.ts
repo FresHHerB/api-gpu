@@ -54,7 +54,7 @@ export class RunPodService {
   async processVideo(
     operation: 'caption' | 'img2vid' | 'addaudio',
     data: any
-  ): Promise<VideoResponse> {
+  ): Promise<VideoResponse | any> {
     const startTime = Date.now();
 
     try {
@@ -82,6 +82,29 @@ export class RunPodService {
       });
 
       // 3. Return result in standard format
+      // For img2vid batch, return full response with videos array
+      if (operation === 'img2vid' && result.output.videos) {
+        return {
+          code: 200,
+          message: result.output.message || 'Images converted to videos successfully',
+          videos: result.output.videos,
+          execution: {
+            startTime: new Date(startTime).toISOString(),
+            endTime: new Date(endTime).toISOString(),
+            durationMs,
+            durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
+          },
+          stats: {
+            jobId: job.id,
+            delayTime: result.delayTime,
+            executionTime: result.executionTime,
+            total: result.output.total,
+            processed: result.output.processed
+          }
+        };
+      }
+
+      // For single video operations (caption, addaudio)
       return {
         code: 200,
         message: `Video ${operation} completed successfully`,

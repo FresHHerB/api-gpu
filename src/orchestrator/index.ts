@@ -16,7 +16,7 @@ dotenv.config();
 import videoProxyRoutes from './routes/videoProxy';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = parseInt(process.env.PORT || '3000', 10);
 
 // ============================================
 // Middlewares
@@ -31,7 +31,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request logging
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   logger.info('Incoming request', {
     method: req.method,
     path: req.path,

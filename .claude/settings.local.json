@@ -4,7 +4,12 @@
       "WebSearch",
       "Bash(docker build:*)",
       "Bash(tee:*)",
-      "WebFetch(domain:www.npmjs.com)"
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(npm run build:orchestrator:*)",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []
