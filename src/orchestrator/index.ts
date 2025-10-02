@@ -12,8 +12,8 @@ import { logger } from '../shared/utils/logger';
 // Carregar variáveis de ambiente
 dotenv.config();
 
-// Importar rotas (será criado)
-// import videoProxyRoutes from './routes/videoProxy';
+// Importar rotas
+import videoProxyRoutes from './routes/videoProxy';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -54,16 +54,24 @@ app.get('/health', (_req, res) => {
 });
 
 // ============================================
-// Routes (TODO: implementar)
+// Routes
 // ============================================
 
-// app.use('/', videoProxyRoutes);
+// Video processing routes
+app.use('/', videoProxyRoutes);
 
-// Rota temporária
+// Root endpoint
 app.get('/', (_req, res) => {
   res.json({
-    message: 'API GPU Orchestrator',
+    message: 'API GPU Orchestrator - RunPod Serverless',
     version: '1.0.0',
+    endpoints: {
+      caption: 'POST /video/caption',
+      img2vid: 'POST /video/img2vid',
+      addaudio: 'POST /video/addaudio',
+      health: 'GET /health',
+      runpodHealth: 'GET /runpod/health'
+    },
     documentation: '/docs'
   });
 });

@@ -36,7 +36,42 @@ export interface VideoResponse {
 }
 
 // ============================================
-// Vast.ai Types
+// RunPod Serverless Types
+// ============================================
+
+export interface RunPodJobInput {
+  operation: 'caption' | 'img2vid' | 'addaudio';
+  [key: string]: any; // Request data (url_video, url_srt, etc)
+}
+
+export interface RunPodJobRequest {
+  input: RunPodJobInput;
+  webhook?: string;
+}
+
+export interface RunPodJob {
+  id: string;
+  status: 'IN_QUEUE' | 'IN_PROGRESS' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'TIMED_OUT';
+}
+
+export interface RunPodJobResponse {
+  id: string;
+  status: RunPodJob['status'];
+  delayTime?: number;
+  executionTime?: number;
+  output?: any;
+  error?: string;
+}
+
+export interface RunPodEndpointConfig {
+  endpointId: string;
+  apiKey: string;
+  idleTimeout?: number; // seconds (default: 300 = 5min)
+  maxTimeout?: number; // seconds (default: 600 = 10min)
+}
+
+// ============================================
+// Vast.ai Types (DEPRECATED - mantido para referência)
 // ============================================
 
 export interface VastOffer {

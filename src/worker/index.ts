@@ -20,7 +20,7 @@ dotenv.config();
 // import videoRoutes from './routes/video';
 
 const app = express();
-const PORT = process.env.PORT || 3334;
+const PORT = parseInt(process.env.PORT || '3334', 10);
 
 // ============================================
 // Middlewares

@@ -1,7 +1,7 @@
 {
   "name": "api-gpu",
   "version": "1.0.0",
-  "description": "Video processing API with Vast.ai GPU auto-scaling",
+  "description": "Video processing API with RunPod Serverless GPU auto-scaling",
   "main": "dist/orchestrator/index.js",
   "scripts": {
     "build": "npm run build:orchestrator && npm run build:worker",
@@ -24,7 +24,8 @@
     "ffmpeg",
     "gpu",
     "cuda",
-    "vast.ai",
+    "runpod",
+    "serverless",
     "auto-scaling",
     "orchestrator"
   ],
@@ -38,6 +39,7 @@
     "express": "^4.18.2",
     "helmet": "^7.1.0",
     "joi": "^17.11.0",
+    "runpod-sdk": "^1.1.2",
     "winston": "^3.11.0"
   },
   "devDependencies": {

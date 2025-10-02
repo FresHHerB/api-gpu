@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(docker build:*)",
+      "Bash(tee:*)",
+      "WebFetch(domain:www.npmjs.com)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

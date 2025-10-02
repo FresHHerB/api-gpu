@@ -1,22 +1,29 @@
 # ==================================
-# Worker Dockerfile (Vast.ai GPU)
+# Worker Dockerfile (RunPod Serverless)
 # ==================================
-# Baseado em NVIDIA PyTorch com CUDA
-# Publicado no Docker Hub
+# Imagem leve com CUDA + FFmpeg NVENC + Node.js
+# Otimizado para RunPod Serverless + FlashBoot
 
-FROM nvcr.io/nvidia/pytorch:24.10-py3
+FROM nvidia/cuda:12.1.0-base-ubuntu22.04
 
 # Metadata
 LABEL maintainer="your-email@example.com"
-LABEL description="GPU Worker for video processing with FFmpeg + CUDA"
+LABEL description="RunPod Serverless GPU Worker for video processing with FFmpeg + CUDA"
 
-# Instalar Node.js 20 e FFmpeg
+# Instalar Node.js 20, FFmpeg com NVENC e dependências
 RUN apt-get update && apt-get install -y \
     curl \
-    ffmpeg \
+    wget \
     git \
+    xz-utils \
+    ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+    && tar -xf ffmpeg-release-amd64-static.tar.xz \
+    && mv ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ \
+    && mv ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ \
+    && rm -rf ffmpeg-* \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -29,34 +36,33 @@ WORKDIR /app
 # Copiar package.json primeiro (cache de camadas)
 COPY package*.json ./
 
-# Instalar dependências de produção
-RUN npm ci --only=production
+# Instalar todas as dependências (incluindo dev) para build
+RUN npm install
 
 # Copiar código worker + shared
 COPY src/worker ./src/worker
 COPY src/shared ./src/shared
-COPY tsconfig.worker.json ./tsconfig.json
+
+# Criar tsconfig inline para build (excluir handler.ts)
+RUN echo '{"compilerOptions":{"target":"ES2022","module":"commonjs","lib":["ES2022"],"outDir":"./dist","rootDir":"./src","strict":true,"esModuleInterop":true,"skipLibCheck":true,"forceConsistentCasingInFileNames":true,"resolveJsonModule":true,"moduleResolution":"node"},"include":["src/worker/**/*","src/shared/**/*"],"exclude":["src/worker/handler.ts"]}' > tsconfig.build.json
 
 # Build do worker
-RUN npm install -g typescript
-RUN tsc -p tsconfig.json
+RUN npx tsc -p tsconfig.build.json
 
-# Criar diretórios necessários
-RUN mkdir -p /app/temp /app/output /app/logs
+# Remover dev dependencies após build
+RUN npm prune --production
 
-# Expor porta padrão
-EXPOSE 3334
+# Criar diretórios necessários para processamento
+RUN mkdir -p /tmp/work /tmp/output /app/logs
 
 # Variáveis de ambiente padrão
-ENV PORT=3334
 ENV NODE_ENV=production
-ENV TEMP_DIR=/app/temp
-ENV OUTPUT_DIR=/app/output
+ENV WORK_DIR=/tmp/work
+ENV OUTPUT_DIR=/tmp/output
 ENV LOGS_DIR=/app/logs
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3334/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); });"
+# RunPod Serverless não precisa de EXPOSE ou HEALTHCHECK
+# O handler é chamado diretamente pelo RunPod
 
-# Comando de inicialização
+# Comando de inicialização (HTTP Server para RunPod)
 CMD ["node", "dist/worker/index.js"]
