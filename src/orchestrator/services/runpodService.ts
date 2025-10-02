@@ -180,8 +180,15 @@ export class RunPodService {
     maxAttempts: number = 300 // 10min max (2s * 300 = 600s)
   ): Promise<RunPodJobResponse> {
     let attempt = 0;
-    let delay = 1000; // Start with 1s
+    let delay = 2000; // Start with 2s
     const maxDelay = 5000; // Max 5s between polls
+    let lastStatus = '';
+    const startTime = Date.now();
+
+    logger.info('⏳ Polling RunPod job status', {
+      jobId,
+      maxWaitTime: `${(maxAttempts * maxDelay / 1000 / 60).toFixed(1)}min`
+    });
 
     while (attempt < maxAttempts) {
       try {
@@ -190,36 +197,59 @@ export class RunPodService {
         );
 
         const job = response.data;
+        const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
 
-        logger.debug('📊 Job status check', {
-          jobId,
-          status: job.status,
-          attempt: attempt + 1,
-          maxAttempts
-        });
+        // Log only when status changes or every 10 attempts
+        if (job.status !== lastStatus || attempt % 10 === 0) {
+          logger.info('📊 RunPod job status', {
+            jobId,
+            status: job.status,
+            attempt: attempt + 1,
+            elapsedSec,
+            delayTime: job.delayTime ? `${(job.delayTime / 1000).toFixed(1)}s` : undefined,
+            executionTime: job.executionTime ? `${(job.executionTime / 1000).toFixed(1)}s` : undefined
+          });
+          lastStatus = job.status;
+        }
 
         // Job completed successfully
         if (job.status === 'COMPLETED') {
           if (!job.output) {
             throw new Error('Job completed but no output returned');
           }
+          logger.info('✅ RunPod job completed', {
+            jobId,
+            totalTime: `${elapsedSec}s`,
+            delayTime: job.delayTime ? `${(job.delayTime / 1000).toFixed(1)}s` : undefined,
+            executionTime: job.executionTime ? `${(job.executionTime / 1000).toFixed(1)}s` : undefined
+          });
           return job;
         }
 
         // Job failed
         if (job.status === 'FAILED') {
+          logger.error('❌ RunPod job failed', {
+            jobId,
+            error: job.error,
+            totalTime: `${elapsedSec}s`
+          });
           throw new Error(job.error || 'Job failed without error message');
         }
 
         // Job cancelled or timed out
         if (job.status === 'CANCELLED' || job.status === 'TIMED_OUT') {
+          logger.error('❌ RunPod job aborted', {
+            jobId,
+            status: job.status,
+            totalTime: `${elapsedSec}s`
+          });
           throw new Error(`Job ${job.status.toLowerCase()}`);
         }
 
         // Still in queue or processing, continue polling
         attempt++;
 
-        // Exponential backoff: 1s → 2s → 4s → 5s (max)
+        // Exponential backoff: 2s → 3s → 4.5s → 5s (max)
         delay = Math.min(delay * 1.5, maxDelay);
 
         await this.sleep(delay);
