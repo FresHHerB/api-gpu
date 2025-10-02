@@ -406,6 +406,439 @@ X-API-Key: your-api-key
 | GET | `/job/:jobId` | Status de um job específico |
 | POST | `/job/:jobId/cancel` | Cancelar job em execução |
 
+---
+
+## 📥 Request/Response Bodies Detalhados
+
+### 1️⃣ POST /video/caption
+
+**Adiciona legendas SRT a um vídeo**
+
+**Request Body:**
+```json
+{
+  "url_video": "https://example.com/myvideo.mp4",
+  "url_srt": "https://example.com/subtitles.srt"
+}
+```
+
+**Campos:**
+- `url_video` (string, obrigatório): URL pública do vídeo MP4
+- `url_srt` (string, obrigatório): URL pública do arquivo SRT
+
+**Response Body (Sucesso - 200):**
+```json
+{
+  "code": 200,
+  "message": "Video caption added successfully",
+  "video_url": "/tmp/output/job_1234567890_abc123_captioned.mp4",
+  "execution": {
+    "startTime": "2025-10-02T10:00:00.000Z",
+    "endTime": "2025-10-02T10:01:30.000Z",
+    "durationMs": 90000,
+    "durationSeconds": 90
+  },
+  "stats": {
+    "jobId": "runpod-abc123xyz",
+    "delayTime": 500,
+    "executionTime": 89500
+  }
+}
+```
+
+**Response Body (Erro - 400):**
+```json
+{
+  "error": "Bad Request",
+  "message": "url_video and url_srt are required"
+}
+```
+
+**Response Body (Erro - 500):**
+```json
+{
+  "error": "Processing failed",
+  "message": "FFmpeg exited with code 1"
+}
+```
+
+**Exemplo cURL:**
+```bash
+curl -X POST https://your-server.com/video/caption \
+  -H "X-API-Key: your-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_srt": "https://example.com/subtitles.srt"
+  }'
+```
+
+---
+
+### 2️⃣ POST /video/img2vid
+
+**Converte múltiplas imagens em vídeos com efeito Ken Burns (batch processing)**
+
+**Request Body:**
+```json
+{
+  "images": [
+    {
+      "id": "image-001",
+      "image_url": "https://example.com/photo1.jpg",
+      "duracao": 6.48
+    },
+    {
+      "id": "image-002",
+      "image_url": "https://example.com/photo2.jpg",
+      "duracao": 5.0
+    },
+    {
+      "id": "image-003",
+      "image_url": "https://example.com/photo3.jpg",
+      "duracao": 8.22
+    }
+  ]
+}
+```
+
+**Campos:**
+- `images` (array, obrigatório): Lista de imagens para processar
+  - `id` (string, obrigatório): Identificador único da imagem (retornado no response)
+  - `image_url` (string, obrigatório): URL pública da imagem (JPG/PNG)
+  - `duracao` (number, obrigatório): Duração do vídeo em segundos (ex: 5.0, 6.48)
+
+**Notas:**
+- Framerate fixo: 24fps (não configurável)
+- Processamento paralelo: 3 imagens simultâneas (configurável via `BATCH_SIZE`)
+- Formato de saída: MP4 1920x1080 @ 24fps
+- Codec: h264_nvenc (GPU accelerated)
+
+**Response Body (Sucesso - 200):**
+```json
+{
+  "code": 200,
+  "message": "Images converted to videos successfully",
+  "videos": [
+    {
+      "id": "image-001",
+      "video_url": "/tmp/output/job_1234567890_abc_video.mp4"
+    },
+    {
+      "id": "image-002",
+      "video_url": "/tmp/output/job_1234567891_def_video.mp4"
+    },
+    {
+      "id": "image-003",
+      "video_url": "/tmp/output/job_1234567892_ghi_video.mp4"
+    }
+  ],
+  "execution": {
+    "startTime": "2025-10-02T10:00:00.000Z",
+    "endTime": "2025-10-02T10:02:15.000Z",
+    "durationMs": 135000,
+    "durationSeconds": 135
+  },
+  "stats": {
+    "jobId": "runpod-batch-xyz123",
+    "delayTime": 1200,
+    "executionTime": 133800,
+    "total": 3,
+    "processed": 3
+  }
+}
+```
+
+**Response Body (Erro - 400 - Array vazio):**
+```json
+{
+  "error": "Bad Request",
+  "message": "images array is required with at least one image"
+}
+```
+
+**Response Body (Erro - 400 - Campos faltando):**
+```json
+{
+  "error": "Bad Request",
+  "message": "Each image must have id, image_url, and duracao"
+}
+```
+
+**Response Body (Erro - 500):**
+```json
+{
+  "error": "Processing failed",
+  "message": "Failed to download image from URL"
+}
+```
+
+**Exemplo cURL:**
+```bash
+curl -X POST https://your-server.com/video/img2vid \
+  -H "X-API-Key: your-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "images": [
+      {
+        "id": "img-1",
+        "image_url": "https://picsum.photos/1920/1080?random=1",
+        "duracao": 5.5
+      },
+      {
+        "id": "img-2",
+        "image_url": "https://picsum.photos/1920/1080?random=2",
+        "duracao": 6.0
+      }
+    ]
+  }'
+```
+
+**Exemplo JavaScript/Fetch:**
+```javascript
+const response = await fetch('https://your-server.com/video/img2vid', {
+  method: 'POST',
+  headers: {
+    'X-API-Key': 'your-api-key-here',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    images: [
+      {
+        id: 'scene-1',
+        image_url: 'https://example.com/image1.jpg',
+        duracao: 6.48
+      },
+      {
+        id: 'scene-2',
+        image_url: 'https://example.com/image2.jpg',
+        duracao: 5.0
+      }
+    ]
+  })
+});
+
+const result = await response.json();
+console.log('Videos:', result.videos);
+// Output: [
+//   { id: 'scene-1', video_url: '/tmp/output/job_xxx_video.mp4' },
+//   { id: 'scene-2', video_url: '/tmp/output/job_yyy_video.mp4' }
+// ]
+```
+
+---
+
+### 3️⃣ POST /video/addaudio
+
+**Adiciona ou substitui áudio em um vídeo**
+
+**Request Body:**
+```json
+{
+  "url_video": "https://example.com/video.mp4",
+  "url_audio": "https://example.com/background-music.mp3"
+}
+```
+
+**Campos:**
+- `url_video` (string, obrigatório): URL pública do vídeo MP4
+- `url_audio` (string, obrigatório): URL pública do arquivo de áudio (MP3/AAC/WAV)
+
+**Notas:**
+- O vídeo final terá a duração do arquivo mais curto (vídeo ou áudio)
+- Áudio é re-encodado para AAC 192kbps
+- Vídeo é re-encodado com h264_nvenc (GPU)
+
+**Response Body (Sucesso - 200):**
+```json
+{
+  "code": 200,
+  "message": "Video addaudio completed successfully",
+  "video_url": "/tmp/output/job_1234567890_xyz_with_audio.mp4",
+  "execution": {
+    "startTime": "2025-10-02T10:00:00.000Z",
+    "endTime": "2025-10-02T10:01:00.000Z",
+    "durationMs": 60000,
+    "durationSeconds": 60
+  },
+  "stats": {
+    "jobId": "runpod-audio-abc",
+    "delayTime": 300,
+    "executionTime": 59700
+  }
+}
+```
+
+**Response Body (Erro - 400):**
+```json
+{
+  "error": "Bad Request",
+  "message": "url_video and url_audio are required"
+}
+```
+
+**Exemplo cURL:**
+```bash
+curl -X POST https://your-server.com/video/addaudio \
+  -H "X-API-Key: your-api-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url_video": "https://example.com/video-no-audio.mp4",
+    "url_audio": "https://example.com/soundtrack.mp3"
+  }'
+```
+
+---
+
+### 4️⃣ GET /health
+
+**Health check da API (sem autenticação)**
+
+**Request:** Sem body
+
+**Response Body (200):**
+```json
+{
+  "status": "healthy",
+  "service": "AutoDark Orchestrator",
+  "timestamp": "2025-10-02T10:00:00.000Z",
+  "uptime": 86400,
+  "runpod": {
+    "configured": true
+  }
+}
+```
+
+**Exemplo cURL:**
+```bash
+curl https://your-server.com/health
+```
+
+---
+
+### 5️⃣ GET /runpod/health
+
+**Status do RunPod endpoint (requer autenticação)**
+
+**Request:** Sem body
+
+**Response Body (200):**
+```json
+{
+  "status": "healthy",
+  "endpoint": "RunPod Serverless",
+  "timestamp": "2025-10-02T10:00:00.000Z"
+}
+```
+
+**Response Body (503 - Unhealthy):**
+```json
+{
+  "status": "unhealthy",
+  "error": "RunPod endpoint not responding"
+}
+```
+
+---
+
+### 6️⃣ GET /runpod/config
+
+**Configuração do RunPod (requer autenticação)**
+
+**Request:** Sem body
+
+**Response Body (200):**
+```json
+{
+  "endpointId": "5utj4m2ukiumpp",
+  "idleTimeout": 300,
+  "maxTimeout": 600
+}
+```
+
+---
+
+### 7️⃣ GET /job/:jobId
+
+**Status de um job específico no RunPod**
+
+**Request:** Sem body
+
+**URL Params:**
+- `jobId` (string): ID do job RunPod
+
+**Response Body (200 - In Progress):**
+```json
+{
+  "id": "runpod-job-abc123",
+  "status": "IN_PROGRESS",
+  "delayTime": 1500
+}
+```
+
+**Response Body (200 - Completed):**
+```json
+{
+  "id": "runpod-job-abc123",
+  "status": "COMPLETED",
+  "delayTime": 1200,
+  "executionTime": 45000,
+  "output": {
+    "video_url": "/tmp/output/job_xxx.mp4"
+  }
+}
+```
+
+**Response Body (404):**
+```json
+{
+  "error": "Job not found",
+  "message": "Job ID does not exist"
+}
+```
+
+**Exemplo cURL:**
+```bash
+curl -H "X-API-Key: your-api-key-here" \
+  https://your-server.com/job/runpod-job-abc123
+```
+
+---
+
+### 8️⃣ POST /job/:jobId/cancel
+
+**Cancela um job em execução**
+
+**Request:** Sem body
+
+**URL Params:**
+- `jobId` (string): ID do job RunPod
+
+**Response Body (200):**
+```json
+{
+  "message": "Job cancelled successfully",
+  "jobId": "runpod-job-abc123"
+}
+```
+
+**Response Body (500):**
+```json
+{
+  "error": "Failed to cancel job",
+  "message": "Job is already completed"
+}
+```
+
+**Exemplo cURL:**
+```bash
+curl -X POST \
+  -H "X-API-Key: your-api-key-here" \
+  https://your-server.com/job/runpod-job-abc123/cancel
+```
+
+---
+
 ### Tipos TypeScript
 
 ```typescript
