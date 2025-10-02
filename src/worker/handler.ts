@@ -33,29 +33,27 @@ async function handler(job: { input: RunPodJobInput }): Promise<any> {
     // Initialize FFmpeg service (create dirs)
     await ffmpegService.initialize();
 
-    let outputPath: string;
-    let processingStats: any = {};
+    let result: any;
 
     // Route to appropriate handler based on operation
     switch (operation) {
       case 'caption':
-        outputPath = await handleCaption(data as CaptionRequest);
+        const captionPath = await handleCaption(data as CaptionRequest);
+        result = { video_url: captionPath };
         break;
 
       case 'img2vid':
-        outputPath = await handleImg2Vid(data as Img2VidRequest);
+        result = await handleImg2Vid(data as Img2VidRequest);
         break;
 
       case 'addaudio':
-        outputPath = await handleAddAudio(data as AddAudioRequest);
+        const audioPath = await handleAddAudio(data as AddAudioRequest);
+        result = { video_url: audioPath };
         break;
 
       default:
         throw new Error(`Unknown operation: ${operation}`);
     }
-
-    // Get output file stats
-    const fileStats = await ffmpegService.getFileStats(outputPath);
 
     const endTime = Date.now();
     const durationMs = endTime - startTime;
@@ -64,22 +62,18 @@ async function handler(job: { input: RunPodJobInput }): Promise<any> {
       operation,
       durationMs,
       durationSec: (durationMs / 1000).toFixed(2),
-      outputPath,
-      fileStats
+      result
     });
 
     // Return result in format expected by RunPod
     return {
-      video_url: `file://${outputPath}`,  // RunPod will handle file serving
+      success: true,
+      message: `${operation} completed successfully`,
+      ...result,
       stats: {
         operation,
         processingTimeMs: durationMs,
-        processingTimeSec: parseFloat((durationMs / 1000).toFixed(2)),
-        outputFile: {
-          path: outputPath,
-          ...fileStats
-        },
-        ...processingStats
+        processingTimeSec: parseFloat((durationMs / 1000).toFixed(2))
       }
     };
 
@@ -119,41 +113,38 @@ async function handleCaption(data: CaptionRequest): Promise<string> {
 }
 
 /**
- * Handle Img2Vid operation
+ * Handle Img2Vid batch operation
  */
-async function handleImg2Vid(data: Img2VidRequest): Promise<string> {
-  const {
-    url_image,
-    frame_rate = 24,
-    duration = 5.0
-  } = data;
+async function handleImg2Vid(data: Img2VidRequest): Promise<any> {
+  const { images } = data;
 
-  if (!url_image) {
-    throw new Error('url_image is required');
+  if (!images || !Array.isArray(images) || images.length === 0) {
+    throw new Error('images array is required with at least one image');
   }
 
-  // Validate parameters
-  if (frame_rate < 1 || frame_rate > 60) {
-    throw new Error('frame_rate must be between 1 and 60');
+  // Validate each image
+  for (const img of images) {
+    if (!img.id || !img.image_url || !img.duracao) {
+      throw new Error('Each image must have id, image_url, and duracao');
+    }
   }
 
-  if (duration < 0.1 || duration > 60) {
-    throw new Error('duration must be between 0.1 and 60 seconds');
-  }
-
-  logger.info('🖼️ Processing img2vid', {
-    url_image,
-    frame_rate,
-    duration
+  logger.info('🖼️ Processing img2vid batch', {
+    imageCount: images.length,
+    batchSize: process.env.BATCH_SIZE || 3
   });
 
-  const outputPath = await ffmpegService.imageToVideo(
-    url_image,
-    duration,
-    frame_rate
-  );
+  const results = await ffmpegService.imagesToVideos(images);
 
-  return outputPath;
+  // Return batch result format
+  return {
+    videos: results.map(r => ({
+      id: r.id,
+      video_url: r.video_path
+    })),
+    total: images.length,
+    processed: results.length
+  };
 }
 
 /**
