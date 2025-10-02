@@ -19,17 +19,20 @@ WORKDIR /app
 # Copiar package.json
 COPY package*.json ./
 
-# Instalar dependências de produção
-RUN npm ci --only=production
+# Instalar dependências (incluindo dev para build)
+RUN npm ci
 
 # Copiar código orchestrator + shared
 COPY src/orchestrator ./src/orchestrator
 COPY src/shared ./src/shared
-COPY tsconfig.orchestrator.json ./tsconfig.json
+COPY tsconfig.json ./
+COPY tsconfig.orchestrator.json ./
 
 # Build do orchestrator
-RUN npm install -g typescript
-RUN tsc -p tsconfig.json
+RUN npm run build:orchestrator
+
+# Limpar dev dependencies após build
+RUN npm prune --production
 
 # Criar diretórios
 RUN mkdir -p /app/logs

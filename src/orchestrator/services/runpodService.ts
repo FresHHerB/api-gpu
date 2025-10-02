@@ -98,34 +98,24 @@ export class RunPodService {
       // 3. Decode base64 videos and save locally
       await ensureOutputDir();
 
-      // For img2vid batch, decode and save videos
+      // For img2vid batch, all videos are uploaded to VPS directly
       if (operation === 'img2vid' && result.output.videos) {
-        const decodedVideos = await Promise.all(
-          result.output.videos.map(async (video: any) => {
-            const filename = `${video.id}_${Date.now()}.mp4`;
-            const filepath = path.join(OUTPUT_DIR, filename);
+        const processedVideos = result.output.videos.map((video: any) => {
+          logger.info('Video uploaded to VPS by worker', {
+            id: video.id,
+            video_url: video.video_url
+          });
 
-            // Decode base64 and save
-            const buffer = Buffer.from(video.video_base64, 'base64');
-            await fs.writeFile(filepath, buffer);
-
-            logger.info('Video saved locally', {
-              id: video.id,
-              filename,
-              size: buffer.length
-            });
-
-            return {
-              id: video.id,
-              video_url: `/output/${filename}`
-            };
-          })
-        );
+          return {
+            id: video.id,
+            video_url: video.video_url
+          };
+        });
 
         return {
           code: 200,
           message: result.output.message || 'Images converted to videos successfully',
-          videos: decodedVideos,
+          videos: processedVideos,
           execution: {
             startTime: new Date(startTime).toISOString(),
             endTime: new Date(endTime).toISOString(),

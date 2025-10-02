@@ -40,6 +40,8 @@ ENV PYTHONUNBUFFERED=1
 ENV WORK_DIR=/tmp/work
 ENV OUTPUT_DIR=/tmp/output
 ENV BATCH_SIZE=3
+ENV VPS_UPLOAD_URL=https://api-gpu.automear.com/upload/video
+ENV VPS_API_KEY=your-api-key-here
 
 # RunPod Serverless entry point
 CMD ["python", "-u", "rp_handler.py"]

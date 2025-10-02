@@ -12,7 +12,7 @@ import requests
 import uuid
 import base64
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Setup logging
@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 WORK_DIR = Path(os.getenv('WORK_DIR', '/tmp/work'))
 OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '3'))
+
+# VPS Upload Configuration (ALWAYS upload, base64 too large)
+VPS_UPLOAD_URL = os.getenv('VPS_UPLOAD_URL', '')  # e.g., https://api-gpu.automear.com/upload/video
+VPS_API_KEY = os.getenv('VPS_API_KEY', '')
 
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -115,6 +119,32 @@ def add_caption(url_video: str, url_srt: str) -> str:
         raise
 
 
+def upload_video_to_vps(image_id: str, video_base64: str) -> Optional[str]:
+    """Upload video to VPS and return URL"""
+    if not VPS_UPLOAD_URL or not VPS_API_KEY:
+        logger.warning("VPS upload not configured, returning base64 instead")
+        return None
+
+    try:
+        response = requests.post(
+            VPS_UPLOAD_URL,
+            json={'id': image_id, 'video_base64': video_base64},
+            headers={'X-API-Key': VPS_API_KEY},
+            timeout=30
+        )
+        response.raise_for_status()
+
+        result = response.json()
+        video_url = result.get('video_url')
+
+        logger.info(f"✅ Video uploaded to VPS: {image_id} -> {video_url}")
+        return video_url
+
+    except Exception as e:
+        logger.error(f"Failed to upload video to VPS: {e}")
+        return None
+
+
 def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, str]:
     """Convert single image to video with Ken Burns effect"""
     job_id = str(uuid.uuid4())
@@ -162,7 +192,20 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
         image_path.unlink(missing_ok=True)
         output_path.unlink(missing_ok=True)
 
-        return {'id': image_id, 'video_base64': video_data}
+        # ALWAYS upload to VPS (base64 is too large even for small batches)
+        if not VPS_UPLOAD_URL or not VPS_API_KEY:
+            raise Exception("VPS_UPLOAD_URL and VPS_API_KEY must be configured")
+
+        try:
+            video_url = upload_video_to_vps(image_id, video_data)
+            if video_url:
+                logger.info(f"✅ Video uploaded to VPS: {image_id}")
+                return {'id': image_id, 'video_url': video_url}
+            else:
+                raise Exception("VPS upload returned no URL")
+        except Exception as upload_error:
+            logger.error(f"❌ VPS upload FAILED for {image_id}: {upload_error}")
+            raise Exception(f"Cannot process video: VPS upload failed - {upload_error}")
 
     except Exception as e:
         logger.error(f"Image to video failed for {image_id}: {e}")
@@ -175,7 +218,9 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
 def images_to_videos(images: List[Dict]) -> List[Dict[str, str]]:
     """Convert multiple images to videos in parallel batches"""
     batch_job_id = str(uuid.uuid4())
-    logger.info(f"Starting batch img2vid job {batch_job_id}: {len(images)} images, batch_size={BATCH_SIZE}")
+    num_images = len(images)
+
+    logger.info(f"🌐 Starting batch img2vid job {batch_job_id}: {num_images} images (all will upload to VPS)")
 
     results = []
     errors = []
@@ -306,12 +351,13 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
             videos = images_to_videos(images)
 
+            # All videos are uploaded to VPS (base64 too large)
             return {
                 "success": True,
-                "videos": [{"id": v['id'], "video_base64": v['video_base64']} for v in videos],
+                "videos": [{"id": v['id'], "video_url": v['video_url']} for v in videos],
                 "total": len(images),
                 "processed": len(videos),
-                "message": "Images converted to videos successfully"
+                "message": "Images converted to videos and uploaded to VPS successfully"
             }
 
         elif operation == "addaudio":

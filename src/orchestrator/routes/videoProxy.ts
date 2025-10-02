@@ -296,4 +296,57 @@ router.post('/job/:jobId/cancel', authenticateApiKey, async (req: Request, res: 
   }
 });
 
+/**
+ * POST /upload/video
+ * Receive video upload directly from GPU worker
+ * Bypasses base64 encoding for large batches
+ */
+router.post('/upload/video', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id, video_base64 } = req.body;
+
+    if (!id || !video_base64) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'id and video_base64 are required'
+      });
+      return;
+    }
+
+    // Save video to output directory
+    const filename = `${id}_${Date.now()}.mp4`;
+    const { promises: fs } = await import('fs');
+    const path = await import('path');
+    const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
+
+    await fs.mkdir(OUTPUT_DIR, { recursive: true });
+
+    const filepath = path.join(OUTPUT_DIR, filename);
+    const buffer = Buffer.from(video_base64, 'base64');
+    await fs.writeFile(filepath, buffer);
+
+    logger.info('📹 Video uploaded from GPU worker', {
+      id,
+      filename,
+      size: buffer.length
+    });
+
+    res.json({
+      success: true,
+      id,
+      video_url: `/output/${filename}`
+    });
+
+  } catch (error) {
+    logger.error('❌ Video upload failed', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(500).json({
+      error: 'Upload failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 export default router;
