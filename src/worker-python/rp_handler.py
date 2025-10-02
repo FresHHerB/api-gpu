@@ -34,14 +34,24 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 def download_file(url: str, output_path: Path) -> None:
     """Download file from URL"""
     logger.info(f"Downloading {url} to {output_path}")
-    response = requests.get(url, stream=True, timeout=300)
-    response.raise_for_status()
+    try:
+        response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
+        response.raise_for_status()
 
-    with open(output_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
 
-    logger.info(f"Download completed: {output_path}")
+        file_size = output_path.stat().st_size
+        logger.info(f"Download completed: {output_path} ({file_size} bytes)")
+
+        if file_size == 0:
+            raise Exception(f"Downloaded file is empty: {url}")
+
+    except Exception as e:
+        logger.error(f"Download failed for {url}: {e}")
+        raise Exception(f"Failed to download {url}: {str(e)}")
 
 
 def run_ffmpeg(args: List[str]) -> None:
@@ -78,14 +88,13 @@ def add_caption(url_video: str, url_srt: str) -> str:
         # Add captions with GPU acceleration
         run_ffmpeg([
             '-hwaccel', 'cuda',
+            '-hwaccel_output_format', 'cuda',
             '-i', str(video_path),
             '-vf', f"subtitles='{srt_path}'",
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-rc', 'vbr',
             '-cq', '23',
             '-b:v', '5M',
-            '-maxrate', '10M',
             '-c:a', 'copy',
             str(output_path)
         ])
@@ -112,8 +121,14 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
     output_path = OUTPUT_DIR / f"{job_id}_{image_id}_video.mp4"
 
     try:
+        logger.info(f"Processing image {image_id}: url={image_url}, duration={duracao}s")
+
         # Download image
         download_file(image_url, image_path)
+
+        # Verify image was downloaded
+        if not image_path.exists():
+            raise Exception(f"Image file not found after download: {image_path}")
 
         # Calculate zoom parameters (24fps fixed)
         total_frames = int(duracao * 24)
@@ -131,10 +146,8 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
             ),
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-rc', 'vbr',
             '-cq', '23',
             '-b:v', '8M',
-            '-maxrate', '12M',
             '-pix_fmt', 'yuv420p',
             '-t', str(duracao),
             str(output_path)
@@ -194,6 +207,10 @@ def images_to_videos(images: List[Dict]) -> List[Dict[str, str]]:
     if errors:
         logger.warning(f"Batch completed with {len(errors)} errors: {errors}")
 
+    if len(results) == 0:
+        error_details = "; ".join([f"{e['id']}: {e['error']}" for e in errors])
+        raise Exception(f"All images failed to process: {error_details}")
+
     logger.info(f"Batch job completed: {len(results)}/{len(images)} succeeded")
 
     return results
@@ -214,14 +231,13 @@ def add_audio(url_video: str, url_audio: str) -> str:
         # Merge audio with GPU acceleration
         run_ffmpeg([
             '-hwaccel', 'cuda',
+            '-hwaccel_output_format', 'cuda',
             '-i', str(video_path),
             '-i', str(audio_path),
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-rc', 'vbr',
             '-cq', '23',
             '-b:v', '5M',
-            '-maxrate', '10M',
             '-c:a', 'aac',
             '-b:a', '192k',
             '-shortest',

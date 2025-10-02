@@ -18,16 +18,11 @@ RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-dev \
     python3-pip \
-    wget \
-    xz-utils \
+    ffmpeg \
+    nvidia-cuda-toolkit \
     ca-certificates \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
-    && wget https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
-    && tar -xf ffmpeg-release-amd64-static.tar.xz \
-    && mv ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ \
-    && mv ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ \
-    && rm -rf ffmpeg-* \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
