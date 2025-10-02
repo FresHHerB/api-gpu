@@ -3,6 +3,7 @@
 // ============================================
 
 import express from 'express';
+import path from 'path';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
@@ -14,6 +15,9 @@ dotenv.config();
 
 // Importar rotas
 import videoProxyRoutes from './routes/videoProxy';
+
+// Importar cleanup scheduler
+import { startCleanupScheduler } from './utils/cleanup';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -56,6 +60,9 @@ app.get('/health', (_req, res) => {
 // ============================================
 // Routes
 // ============================================
+
+// Static files - serve output videos
+app.use('/output', express.static(path.join(process.cwd(), 'public', 'output')));
 
 // Video processing routes
 app.use('/', videoProxyRoutes);
@@ -105,6 +112,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   });
 
   logger.info(`📡 Endpoints: http://0.0.0.0:${PORT}`);
+
+  // Start cleanup scheduler for old videos
+  startCleanupScheduler();
 });
 
 // Graceful shutdown

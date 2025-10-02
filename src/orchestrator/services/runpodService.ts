@@ -3,6 +3,8 @@
 // ============================================
 
 import axios, { AxiosInstance } from 'axios';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { logger } from '../../shared/utils/logger';
 import {
   RunPodJobRequest,
@@ -10,6 +12,18 @@ import {
   RunPodEndpointConfig,
   VideoResponse
 } from '../../shared/types';
+
+// Output directory for decoded videos
+const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
+
+// Ensure output directory exists
+async function ensureOutputDir() {
+  try {
+    await fs.mkdir(OUTPUT_DIR, { recursive: true });
+  } catch (error) {
+    logger.error('Failed to create output directory', { error });
+  }
+}
 
 export class RunPodService {
   private client: AxiosInstance;
@@ -81,13 +95,37 @@ export class RunPodService {
         durationSec: (durationMs / 1000).toFixed(2)
       });
 
-      // 3. Return result in standard format
-      // For img2vid batch, return full response with videos array
+      // 3. Decode base64 videos and save locally
+      await ensureOutputDir();
+
+      // For img2vid batch, decode and save videos
       if (operation === 'img2vid' && result.output.videos) {
+        const decodedVideos = await Promise.all(
+          result.output.videos.map(async (video: any) => {
+            const filename = `${video.id}_${Date.now()}.mp4`;
+            const filepath = path.join(OUTPUT_DIR, filename);
+
+            // Decode base64 and save
+            const buffer = Buffer.from(video.video_base64, 'base64');
+            await fs.writeFile(filepath, buffer);
+
+            logger.info('Video saved locally', {
+              id: video.id,
+              filename,
+              size: buffer.length
+            });
+
+            return {
+              id: video.id,
+              video_url: `/output/${filename}`
+            };
+          })
+        );
+
         return {
           code: 200,
           message: result.output.message || 'Images converted to videos successfully',
-          videos: result.output.videos,
+          videos: decodedVideos,
           execution: {
             startTime: new Date(startTime).toISOString(),
             endTime: new Date(endTime).toISOString(),
