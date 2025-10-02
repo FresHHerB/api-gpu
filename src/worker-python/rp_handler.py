@@ -10,6 +10,7 @@ import logging
 import subprocess
 import requests
 import uuid
+import base64
 from pathlib import Path
 from typing import Dict, List, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -153,10 +154,15 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
             str(output_path)
         ])
 
+        # Read video and encode as base64
+        with open(output_path, 'rb') as f:
+            video_data = base64.b64encode(f.read()).decode('utf-8')
+
         # Cleanup
         image_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
 
-        return {'id': image_id, 'video_path': str(output_path)}
+        return {'id': image_id, 'video_base64': video_data}
 
     except Exception as e:
         logger.error(f"Image to video failed for {image_id}: {e}")
@@ -302,7 +308,7 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
             return {
                 "success": True,
-                "videos": [{"id": v['id'], "video_url": v['video_path']} for v in videos],
+                "videos": [{"id": v['id'], "video_base64": v['video_base64']} for v in videos],
                 "total": len(images),
                 "processed": len(videos),
                 "message": "Images converted to videos successfully"
