@@ -1,33 +1,29 @@
 # ==================================
 # Worker Python Dockerfile (RunPod Serverless)
 # ==================================
-# Minimal Python 3.11 + FFmpeg NVENC + RunPod SDK
-# Optimized for fast startup and GPU acceleration
+# Ultra-minimal: Python slim + FFmpeg Ubuntu (with NVENC via RunPod GPU runtime)
+# Target: <700MB for ultra-fast cold start
 
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+FROM python:3.11-slim
 
 # Metadata
 LABEL maintainer="api-gpu-team"
-LABEL description="RunPod Serverless GPU Worker (Python) - Optimized for NVENC"
+LABEL description="RunPod Serverless GPU Worker (Python) - Minimal with NVENC"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install minimal dependencies for Python + FFmpeg NVENC
+# Install FFmpeg from Ubuntu repos (RunPod provides NVENC via GPU runtime)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 \
-    python3-pip \
     ffmpeg \
     ca-certificates \
-    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
-    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies (minimal, no cache)
+# Copy requirements and install Python dependencies
 COPY src/worker-python/requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
@@ -37,7 +33,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY src/worker-python/rp_handler.py .
 
 # Create necessary directories
-RUN mkdir -p /tmp/work /tmp/output /app/logs
+RUN mkdir -p /tmp/work /tmp/output
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
