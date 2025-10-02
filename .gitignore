@@ -56,3 +56,7 @@ coverage/
 # Git
 .git/
 .gitattributes
+
+# Claude Code settings (contains secrets)
+.claude/settings.local.json
+.claude/**/*.local.json

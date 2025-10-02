@@ -164,25 +164,29 @@ async function handleAddAudio(data: AddAudioRequest): Promise<string> {
 }
 
 // ============================================
-// Start RunPod Serverless Worker
+// RunPod Serverless Entry Point
 // ============================================
 
 /**
- * RunPod Serverless Entry Point
- * RunPod calls this handler function directly for each job
+ * RunPod expects the handler to be the default export
+ * The handler is called with: handler(event)
+ * Where event = { input: RunPodJobInput, ... }
  */
-if (require.main === module) {
-  logger.info('🏁 RunPod Serverless Handler loaded');
-  logger.info('⚙️ Configuration', {
-    workDir: process.env.WORK_DIR || '/tmp/work',
-    outputDir: process.env.OUTPUT_DIR || '/tmp/output',
-    nodeVersion: process.version
-  });
-  logger.info('✅ Handler ready to receive RunPod jobs');
-}
 
-// Export handler for RunPod to call
+// Log when module loads
+logger.info('🏁 RunPod Serverless Handler Module Loaded');
+logger.info('⚙️ Configuration', {
+  workDir: process.env.WORK_DIR || '/tmp/work',
+  outputDir: process.env.OUTPUT_DIR || '/tmp/output',
+  batchSize: process.env.BATCH_SIZE || '3',
+  nodeVersion: process.version
+});
+
+// Export as both named and default for maximum compatibility
 export { handler };
-
-// Also export as default for RunPod compatibility
 export default handler;
+
+// For CommonJS compatibility (RunPod may use require())
+module.exports = handler;
+module.exports.handler = handler;
+module.exports.default = handler;
