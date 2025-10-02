@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist/orchestrator",
+    "rootDir": "./src"
+  },
+  "include": [
+    "src/orchestrator/**/*",
+    "src/shared/**/*"
+  ],
+  "exclude": [
+    "src/worker/**/*"
+  ]
+}
