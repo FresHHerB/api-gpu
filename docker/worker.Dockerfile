@@ -63,5 +63,6 @@ ENV LOGS_DIR=/app/logs
 # RunPod Serverless não precisa de EXPOSE ou HEALTHCHECK
 # O handler é chamado diretamente pelo RunPod
 
-# Comando de inicialização (handler para RunPod Serverless)
-CMD ["node", "dist/worker/handler.js"]
+# Comando de inicialização (HTTP server para RunPod Serverless)
+# RunPod chama via HTTP POST /runsync
+CMD ["node", "dist/worker/index.js"]

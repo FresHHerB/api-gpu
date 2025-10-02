@@ -78,11 +78,66 @@ app.get('/', (_req, res) => {
     message: 'API GPU Worker (RunPod Serverless)',
     version: '2.0.0',
     endpoints: {
+      runsync: 'POST /runsync',
       caption: 'POST /video/caption',
       img2vid: 'POST /video/img2vid',
       addaudio: 'POST /video/addaudio'
     }
   });
+});
+
+// RunPod Serverless endpoint (called by RunPod)
+app.post('/runsync', async (req, res): Promise<void> => {
+  try {
+    const { input } = req.body;
+
+    if (!input || !input.operation) {
+      res.status(400).json({ error: 'Missing input.operation' });
+      return;
+    }
+
+    const { operation, ...data } = input;
+
+    logger.info('RunPod job received', { operation, data });
+
+    let result: any;
+
+    switch (operation) {
+      case 'caption':
+        const captionPath = await ffmpegService.addCaption(data.url_video, data.url_srt);
+        result = { video_url: captionPath };
+        break;
+
+      case 'img2vid':
+        const videos = await ffmpegService.imagesToVideos(data.images);
+        result = {
+          videos: videos.map(v => ({ id: v.id, video_url: v.video_path })),
+          total: data.images.length,
+          processed: videos.length
+        };
+        break;
+
+      case 'addaudio':
+        const audioPath = await ffmpegService.addAudio(data.url_video, data.url_audio);
+        result = { video_url: audioPath };
+        break;
+
+      default:
+        res.status(400).json({ error: `Unknown operation: ${operation}` });
+        return;
+    }
+
+    res.json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    logger.error('RunPod job failed', { error });
+    res.status(500).json({
+      error: 'Job failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // Caption endpoint
