@@ -1,40 +1,37 @@
 # ==================================
 # Worker Python Dockerfile (RunPod Serverless)
 # ==================================
-# Python 3.11 + CUDA + FFmpeg NVENC + RunPod SDK
-# Optimized for RunPod Serverless with GPU acceleration
+# Minimal Python 3.11 + FFmpeg NVENC + RunPod SDK
+# Optimized for fast startup and GPU acceleration
 
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
 # Metadata
 LABEL maintainer="api-gpu-team"
-LABEL description="RunPod Serverless GPU Worker (Python) for video processing with FFmpeg + CUDA"
+LABEL description="RunPod Serverless GPU Worker (Python) - Optimized for NVENC"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Python 3.11, FFmpeg with NVENC, and dependencies
-RUN apt-get update && apt-get install -y \
+# Install minimal dependencies for Python + FFmpeg NVENC
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
-    python3.11-dev \
     python3-pip \
     ffmpeg \
-    nvidia-cuda-toolkit \
     ca-certificates \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Verify installations
-RUN python --version && pip --version && ffmpeg -version
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Working directory
 WORKDIR /app
 
-# Copy requirements and install Python dependencies
+# Copy requirements and install Python dependencies (minimal, no cache)
 COPY src/worker-python/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    && rm -rf /root/.cache/pip
 
 # Copy handler
 COPY src/worker-python/rp_handler.py .
