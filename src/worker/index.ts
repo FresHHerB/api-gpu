@@ -42,7 +42,7 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 // app.use(sessionAuthMiddleware);
 
 // Request logging
-app.use((req, res, next) => {
+app.use((req, _res, next) => {
   logger.info('Worker incoming request', {
     method: req.method,
     path: req.path,
@@ -86,12 +86,13 @@ app.get('/', (_req, res) => {
 });
 
 // Caption endpoint
-app.post('/video/caption', async (req, res) => {
+app.post('/video/caption', async (req, res): Promise<void> => {
   try {
     const { url_video, url_srt } = req.body as CaptionRequest;
 
     if (!url_video || !url_srt) {
-      return res.status(400).json({ error: 'Missing url_video or url_srt' });
+      res.status(400).json({ error: 'Missing url_video or url_srt' });
+      return;
     }
 
     logger.info('Processing caption request', { url_video, url_srt });
@@ -112,12 +113,13 @@ app.post('/video/caption', async (req, res) => {
 });
 
 // Img2vid endpoint (batch processing)
-app.post('/video/img2vid', async (req, res) => {
+app.post('/video/img2vid', async (req, res): Promise<void> => {
   try {
     const { images } = req.body as Img2VidRequest;
 
     if (!images || !Array.isArray(images) || images.length === 0) {
-      return res.status(400).json({ error: 'Missing or invalid images array' });
+      res.status(400).json({ error: 'Missing or invalid images array' });
+      return;
     }
 
     logger.info('Processing img2vid batch request', { imageCount: images.length });
@@ -143,12 +145,13 @@ app.post('/video/img2vid', async (req, res) => {
 });
 
 // Add audio endpoint
-app.post('/video/addaudio', async (req, res) => {
+app.post('/video/addaudio', async (req, res): Promise<void> => {
   try {
     const { url_video, url_audio } = req.body as AddAudioRequest;
 
     if (!url_video || !url_audio) {
-      return res.status(400).json({ error: 'Missing url_video or url_audio' });
+      res.status(400).json({ error: 'Missing url_video or url_audio' });
+      return;
     }
 
     logger.info('Processing addaudio request', { url_video, url_audio });

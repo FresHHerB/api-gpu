@@ -85,8 +85,7 @@ export class FFmpegService {
    */
   async imageToVideo(
     url_image: string,
-    duration: number = 5.0,
-    frame_rate: number = 24 // Fixed at 24fps
+    duration: number = 5.0
   ): Promise<string> {
     const jobId = this.generateJobId();
     const imagePath = path.join(this.workDir, `${jobId}_input.jpg`);

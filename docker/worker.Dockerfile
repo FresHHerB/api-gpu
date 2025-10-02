@@ -36,6 +36,7 @@ WORKDIR /app
 # Copiar package.json e tsconfig primeiro (cache de camadas)
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY tsconfig.worker.json ./
 
 # Copiar código worker + shared
 COPY src/worker ./src/worker
@@ -44,8 +45,8 @@ COPY src/shared ./src/shared
 # Instalar todas as dependências (incluindo dev) para build
 RUN npm install
 
-# Build do worker usando tsconfig.json
-RUN npx tsc --project tsconfig.json
+# Build do worker usando tsconfig.worker.json
+RUN npx tsc --project tsconfig.worker.json
 
 # Remover dev dependencies após build
 RUN npm prune --production
@@ -62,5 +63,5 @@ ENV LOGS_DIR=/app/logs
 # RunPod Serverless não precisa de EXPOSE ou HEALTHCHECK
 # O handler é chamado diretamente pelo RunPod
 
-# Comando de inicialização (HTTP Server para RunPod)
-CMD ["node", "dist/worker/index.js"]
+# Comando de inicialização (handler para RunPod Serverless)
+CMD ["node", "dist/worker/handler.js"]

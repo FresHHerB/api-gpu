@@ -2,7 +2,6 @@
 // RunPod Serverless Handler
 // ============================================
 
-import runpodSdk from 'runpod-sdk';
 import { FFmpegService } from './services/ffmpegService';
 import { logger } from '../shared/utils/logger';
 import {
@@ -168,20 +167,22 @@ async function handleAddAudio(data: AddAudioRequest): Promise<string> {
 // Start RunPod Serverless Worker
 // ============================================
 
+/**
+ * RunPod Serverless Entry Point
+ * RunPod calls this handler function directly for each job
+ */
 if (require.main === module) {
-  logger.info('🏁 Starting RunPod Serverless Worker');
+  logger.info('🏁 RunPod Serverless Handler loaded');
   logger.info('⚙️ Configuration', {
     workDir: process.env.WORK_DIR || '/tmp/work',
     outputDir: process.env.OUTPUT_DIR || '/tmp/output',
     nodeVersion: process.version
   });
-
-  // Start the serverless worker
-  runpodSdk.serverless.start({
-    handler
-  });
-
-  logger.info('✅ RunPod Worker ready to receive jobs');
+  logger.info('✅ Handler ready to receive RunPod jobs');
 }
 
+// Export handler for RunPod to call
 export { handler };
+
+// Also export as default for RunPod compatibility
+export default handler;
