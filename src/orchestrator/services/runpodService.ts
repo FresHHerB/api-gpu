@@ -559,6 +559,7 @@ export class RunPodService {
     return {
       code: 200,
       message: `${totalImages} images processed across ${workerBatches.length} workers`,
+      video_url: '', // Multi-worker returns videos array below
       videos: allVideos,
       execution: {
         startTime: new Date(startTime).toISOString(),
@@ -572,6 +573,6 @@ export class RunPodService {
         imagesPerWorker: IMAGES_PER_WORKER,
         processed: allVideos.length
       }
-    };
+    } as any;
   }
 }
