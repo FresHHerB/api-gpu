@@ -30,6 +30,9 @@ OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '3'))
 HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
+# RunPod worker ID for proxy URL
+RUNPOD_POD_ID = os.getenv('RUNPOD_POD_ID', 'localhost')
+
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -113,8 +116,11 @@ def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Caption added: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Return HTTP URL to access the video
-        video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+        # Return HTTP URL to access the video via RunPod proxy
+        if RUNPOD_POD_ID != 'localhost':
+            video_url = f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+        else:
+            video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
         return {
             'video_url': video_url,
@@ -165,8 +171,11 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, A
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Image to video completed: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Return HTTP URL to access the video
-        video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+        # Return HTTP URL to access the video via RunPod proxy
+        if RUNPOD_POD_ID != 'localhost':
+            video_url = f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+        else:
+            video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
         return {
             'id': image_id,
@@ -258,8 +267,11 @@ def add_audio(url_video: str, url_audio: str) -> Dict[str, Any]:
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Audio added: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Return HTTP URL to access the video
-        video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+        # Return HTTP URL to access the video via RunPod proxy
+        if RUNPOD_POD_ID != 'localhost':
+            video_url = f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+        else:
+            video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
         return {
             'video_url': video_url,
@@ -345,6 +357,9 @@ if __name__ == "__main__":
     logger.info(f"📂 Output dir: {OUTPUT_DIR}")
     logger.info(f"🔢 Batch size: {BATCH_SIZE}")
     logger.info(f"🌐 HTTP server: port {HTTP_PORT}")
+    logger.info(f"🆔 Pod ID: {RUNPOD_POD_ID}")
+    if RUNPOD_POD_ID != 'localhost':
+        logger.info(f"🔗 Proxy URL: https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/")
     logger.info("=" * 50)
 
     # Validate FFmpeg
