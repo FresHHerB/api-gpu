@@ -93,14 +93,24 @@ export class RunPodService {
       if (operation === 'img2vid' && result.output.videos) {
         logger.info(`✅ Videos uploaded to S3: ${result.output.videos.length} videos`);
 
+        // Map videos and ensure they are sorted by filename order
+        const videos = result.output.videos.map((v: any) => ({
+          id: v.id,
+          video_url: v.video_url,
+          filename: v.filename
+        }));
+
+        // Sort by filename (video_1.mp4, video_2.mp4, etc) to preserve original order
+        videos.sort((a: any, b: any) => {
+          const aNum = parseInt(a.filename.match(/video_(\d+)\.mp4/)?.[1] || '0');
+          const bNum = parseInt(b.filename.match(/video_(\d+)\.mp4/)?.[1] || '0');
+          return aNum - bNum;
+        });
+
         return {
           code: 200,
           message: result.output.message || 'Images converted to videos and uploaded to S3 successfully',
-          videos: result.output.videos.map((v: any) => ({
-            id: v.id,
-            video_url: v.video_url,
-            filename: v.filename
-          })),
+          videos,
           execution: {
             startTime: new Date(startTime).toISOString(),
             endTime: new Date(endTime).toISOString(),
@@ -399,7 +409,7 @@ export class RunPodService {
       })
     );
 
-    logger.info('✅ All jobs completed, merging results');
+    logger.info('✅ All jobs completed, merging and sorting results');
 
     // Collect all videos from all workers (already uploaded to S3)
     const allVideos: any[] = [];
@@ -412,6 +422,18 @@ export class RunPodService {
         })));
       }
     }
+
+    // Sort videos by filename (video_1.mp4, video_2.mp4, etc) to preserve original order
+    allVideos.sort((a: any, b: any) => {
+      const aNum = parseInt(a.filename.match(/video_(\d+)\.mp4/)?.[1] || '0');
+      const bNum = parseInt(b.filename.match(/video_(\d+)\.mp4/)?.[1] || '0');
+      return aNum - bNum;
+    });
+
+    logger.info('✅ Videos sorted by original order', {
+      firstVideo: allVideos[0]?.filename,
+      lastVideo: allVideos[allVideos.length - 1]?.filename
+    });
 
     const endTime = Date.now();
     const durationMs = endTime - startTime;

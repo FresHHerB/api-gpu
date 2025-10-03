@@ -16,7 +16,7 @@ import boto3
 from botocore.exceptions import ClientError
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import threading
 
@@ -342,9 +342,10 @@ def process_img2vid_batch(
 
         logger.info(f"🔄 Processing batch {batch_num}/{total_batches} ({len(batch)} images)")
 
-        # Process current batch in parallel
+        # Process current batch in parallel, preserving order
         with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
-            futures = {
+            # Submit all tasks and store futures in order
+            futures = [
                 executor.submit(
                     image_to_video,
                     img['id'],
@@ -354,15 +355,16 @@ def process_img2vid_batch(
                     worker_id,
                     path,
                     i + j + 1  # video_index: 1, 2, 3, etc.
-                ): (img, j) for j, img in enumerate(batch)
-            }
+                ) for j, img in enumerate(batch)
+            ]
 
-            for future in as_completed(futures):
-                img, j = futures[future]
+            # Wait for results in original order (not completion order)
+            for j, future in enumerate(futures):
+                img = batch[j]
                 try:
                     result = future.result()
                     results.append(result)
-                    logger.info(f"✅ Completed {len(results)}/{total}: {img['id']}")
+                    logger.info(f"✅ Completed {len(results)}/{total}: {img['id']} → {result['filename']}")
                 except Exception as e:
                     logger.error(f"Failed to process {img['id']}: {e}")
                     raise
