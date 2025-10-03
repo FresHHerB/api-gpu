@@ -48,7 +48,12 @@ export interface AddAudioRequest {
 export interface VideoResponse {
   code: number;
   message: string;
-  video_url: string;
+  video_url?: string; // Single video (caption, addaudio)
+  videos?: Array<{ // Multiple videos (img2vid)
+    id: string;
+    video_url: string;
+    filename: string;
+  }>;
   execution: {
     startTime: string;
     endTime: string;
