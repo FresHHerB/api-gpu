@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Directories
 WORK_DIR = Path(os.getenv('WORK_DIR', '/tmp/work'))
 OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
-BATCH_SIZE = int(os.getenv('BATCH_SIZE', '3'))
+BATCH_SIZE = int(os.getenv('BATCH_SIZE', '5'))  # Optimized for RTX A4500 (12 vCPU)
 HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
 # Ensure directories exist
@@ -98,6 +98,7 @@ def add_caption(url_video: str, url_srt: str, worker_id: str = None) -> Dict[str
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
+            '-hwaccel_output_format', 'cuda',  # Keep frames in GPU memory
             '-i', str(video_path),
             '-vf', f"subtitles=filename='{normalized_srt}'",
             '-c:v', 'h264_nvenc',
@@ -328,6 +329,7 @@ def add_audio(url_video: str, url_audio: str, worker_id: str = None) -> Dict[str
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
+            '-hwaccel_output_format', 'cuda',  # Keep frames in GPU memory
             '-i', str(video_path),
             '-i', str(audio_path),
             '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[v];[v]format=nv12[vout]',
@@ -447,6 +449,9 @@ def handler(job: Dict) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    import psutil
+
     logger.info("=" * 50)
     logger.info("🎬 GPU Worker Started (HTTP Mode)")
     logger.info("=" * 50)
@@ -454,6 +459,13 @@ if __name__ == "__main__":
     logger.info(f"📂 Output dir: {OUTPUT_DIR}")
     logger.info(f"🔢 Batch size: {BATCH_SIZE}")
     logger.info(f"🌐 HTTP server: port {HTTP_PORT}")
+
+    # System resources
+    cpu_count = multiprocessing.cpu_count()
+    ram_total = psutil.virtual_memory().total / (1024**3)  # GB
+    logger.info(f"🖥️ vCPU cores: {cpu_count}")
+    logger.info(f"💾 RAM total: {ram_total:.1f} GB")
+
     pod_id = os.getenv('RUNPOD_POD_ID')
     if pod_id:
         logger.info(f"🆔 Pod ID: {pod_id}")

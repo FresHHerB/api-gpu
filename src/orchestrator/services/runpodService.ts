@@ -64,6 +64,7 @@ export class RunPodService {
   /**
    * Process video using RunPod Serverless
    * Handles job submission, polling, and result retrieval
+   * For large batches (>50 images), automatically splits into multiple workers
    */
   async processVideo(
     operation: 'caption' | 'img2vid' | 'addaudio',
@@ -72,6 +73,13 @@ export class RunPodService {
     const startTime = Date.now();
 
     try {
+      // Auto-detect multi-worker strategy for img2vid with large batches
+      if (operation === 'img2vid' && data.images && data.images.length > 50) {
+        logger.info(`📦 Large batch detected (${data.images.length} images), using multi-worker strategy`);
+        return await this.processVideoMultiWorker(operation, data, startTime);
+      }
+
+      // Single worker processing (default)
       logger.info(`🎬 Starting ${operation} job`, { data });
 
       // 1. Submit job to RunPod (async mode)
@@ -224,10 +232,10 @@ export class RunPodService {
    */
   private async pollJobStatus(
     jobId: string,
-    maxAttempts: number = 180 // 12min max (4s avg * 180 = 720s)
+    maxAttempts: number = 60 // ~8min max (optimized for RTX A4500)
   ): Promise<RunPodJobResponse> {
     let attempt = 0;
-    let delay = 3000; // Start with 3s
+    let delay = 2000; // Start with 2s (more responsive)
     const maxDelay = 8000; // Max 8s between polls
     let lastStatus = '';
     const startTime = Date.now();
@@ -451,5 +459,119 @@ export class RunPodService {
    */
   getConfig(): RunPodEndpointConfig {
     return { ...this.config };
+  }
+
+  /**
+   * Process large batches using multiple workers in parallel
+   * Splits images into chunks and distributes across available workers
+   */
+  private async processVideoMultiWorker(
+    operation: 'img2vid',
+    data: any,
+    startTime: number
+  ): Promise<VideoResponse> {
+    const images = data.images;
+    const totalImages = images.length;
+
+    // Calculate optimal distribution
+    const MAX_WORKERS = 3; // RunPod endpoint max workers
+    const IMAGES_PER_WORKER = Math.ceil(totalImages / MAX_WORKERS);
+
+    logger.info('🔀 Multi-worker distribution', {
+      totalImages,
+      maxWorkers: MAX_WORKERS,
+      imagesPerWorker: IMAGES_PER_WORKER
+    });
+
+    // Split images into chunks
+    const workerBatches: any[][] = [];
+    for (let i = 0; i < totalImages; i += IMAGES_PER_WORKER) {
+      workerBatches.push(images.slice(i, i + IMAGES_PER_WORKER));
+    }
+
+    logger.info(`📦 Created ${workerBatches.length} worker batches`);
+
+    // Submit all jobs in parallel
+    const jobPromises = workerBatches.map((batch, idx) => {
+      logger.info(`🚀 Submitting job ${idx + 1}/${workerBatches.length} with ${batch.length} images`);
+      return this.submitJob(operation, { ...data, images: batch });
+    });
+
+    const jobs = await Promise.all(jobPromises);
+
+    logger.info(`✅ All ${jobs.length} jobs submitted`, {
+      jobIds: jobs.map(j => j.id)
+    });
+
+    // Poll all jobs in parallel
+    const results = await Promise.all(
+      jobs.map((job, idx) => {
+        logger.info(`⏳ Polling job ${idx + 1}/${jobs.length}: ${job.id}`);
+        return this.pollJobStatus(job.id);
+      })
+    );
+
+    logger.info('✅ All jobs completed, merging results');
+
+    // Download all videos from all workers
+    await ensureOutputDir();
+
+    const allVideos: any[] = [];
+
+    for (const result of results) {
+      if (result.output.videos) {
+        const processedVideos = await Promise.all(
+          result.output.videos.map(async (video: any) => {
+            try {
+              const localUrl = await this.downloadVideoFromWorker(
+                video.video_url,
+                video.filename
+              );
+
+              return {
+                id: video.id,
+                video_url: localUrl
+              };
+            } catch (error) {
+              logger.error('Failed to download video', {
+                id: video.id,
+                error: error instanceof Error ? error.message : 'Unknown error'
+              });
+              throw error;
+            }
+          })
+        );
+
+        allVideos.push(...processedVideos);
+      }
+    }
+
+    const endTime = Date.now();
+    const durationMs = endTime - startTime;
+
+    logger.info('✅ Multi-worker processing completed', {
+      totalImages,
+      workersUsed: workerBatches.length,
+      totalVideos: allVideos.length,
+      durationSec: (durationMs / 1000).toFixed(2)
+    });
+
+    return {
+      code: 200,
+      message: `${totalImages} images processed across ${workerBatches.length} workers`,
+      videos: allVideos,
+      execution: {
+        startTime: new Date(startTime).toISOString(),
+        endTime: new Date(endTime).toISOString(),
+        durationMs,
+        durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
+      },
+      stats: {
+        totalImages,
+        workersUsed: workerBatches.length,
+        imagesPerWorker: IMAGES_PER_WORKER,
+        processed: allVideos.length
+      }
+    };
   }
 }
