@@ -30,9 +30,6 @@ OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '3'))
 HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
-# RunPod worker ID for proxy URL
-RUNPOD_POD_ID = os.getenv('RUNPOD_POD_ID', 'localhost')
-
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -136,7 +133,7 @@ def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
         srt_path.unlink(missing_ok=True)
 
 
-def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, Any]:
+def image_to_video(image_id: str, image_url: str, duracao: float, worker_id: str = None) -> Dict[str, Any]:
     """Convert image to video using FFmpeg with GPU acceleration"""
     logger.info(f"Converting image to video: {image_id}, duration: {duracao}s")
 
@@ -172,8 +169,8 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, A
         logger.info(f"✅ Image to video completed: {output_filename} ({file_size_mb:.2f} MB)")
 
         # Return HTTP URL to access the video via RunPod proxy
-        if RUNPOD_POD_ID != 'localhost':
-            video_url = f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+        if worker_id:
+            video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
         else:
             video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
@@ -191,7 +188,7 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, A
         image_path.unlink(missing_ok=True)
 
 
-def process_img2vid_batch(images: List[Dict]) -> Dict[str, Any]:
+def process_img2vid_batch(images: List[Dict], worker_id: str = None) -> Dict[str, Any]:
     """Process multiple images to videos in parallel batches"""
     total = len(images)
     logger.info(f"📦 Processing {total} images with batch size {BATCH_SIZE}")
@@ -204,7 +201,8 @@ def process_img2vid_batch(images: List[Dict]) -> Dict[str, Any]:
                 image_to_video,
                 img['id'],
                 img['image_url'],
-                img['duracao']
+                img['duracao'],
+                worker_id
             ): img for img in images
         }
 
@@ -295,8 +293,12 @@ def handler(job: Dict) -> Dict[str, Any]:
     job_input = job.get('input', {})
     operation = job_input.get('operation')
 
+    # Get worker ID - RunPod provides this via RUNPOD_POD_ID env var
+    worker_id = os.getenv('RUNPOD_POD_ID')
+
     logger.info(f"🚀 Job started: {operation}")
     logger.info(f"📥 Input: {job_input}")
+    logger.info(f"🆔 Worker ID: {worker_id}")
 
     try:
         if operation == 'caption':
@@ -320,7 +322,7 @@ def handler(job: Dict) -> Dict[str, Any]:
             if not images:
                 raise ValueError("Missing required field: images")
 
-            result = process_img2vid_batch(images)
+            result = process_img2vid_batch(images, worker_id)
             return {
                 "success": True,
                 **result
@@ -357,9 +359,10 @@ if __name__ == "__main__":
     logger.info(f"📂 Output dir: {OUTPUT_DIR}")
     logger.info(f"🔢 Batch size: {BATCH_SIZE}")
     logger.info(f"🌐 HTTP server: port {HTTP_PORT}")
-    logger.info(f"🆔 Pod ID: {RUNPOD_POD_ID}")
-    if RUNPOD_POD_ID != 'localhost':
-        logger.info(f"🔗 Proxy URL: https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/")
+    pod_id = os.getenv('RUNPOD_POD_ID')
+    if pod_id:
+        logger.info(f"🆔 Pod ID: {pod_id}")
+        logger.info(f"🔗 Proxy URL: https://{pod_id}-{HTTP_PORT}.proxy.runpod.net/")
     logger.info("=" * 50)
 
     # Validate FFmpeg
