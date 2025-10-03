@@ -22,12 +22,11 @@ import { startCleanupScheduler } from './utils/cleanup';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
+const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
 
 // ============================================
 // Ensure output directory exists
 // ============================================
-
-const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
 
 async function ensureOutputDirectory() {
   try {
@@ -40,9 +39,6 @@ async function ensureOutputDirectory() {
     });
   }
 }
-
-// Create output directory before starting server
-await ensureOutputDirectory();
 
 // ============================================
 // Middlewares
@@ -126,7 +122,7 @@ app.use((err: any, req: express.Request, res: express.Response, _next: express.N
 // Start Server
 // ============================================
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', async () => {
   logger.info(`🚀 Orchestrator started`, {
     port: PORT,
     env: process.env.NODE_ENV,
@@ -134,6 +130,9 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   });
 
   logger.info(`📡 Endpoints: http://0.0.0.0:${PORT}`);
+
+  // Ensure output directory exists before starting cleanup
+  await ensureOutputDirectory();
 
   // Start cleanup scheduler for old videos
   startCleanupScheduler();
