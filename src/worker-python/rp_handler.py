@@ -95,10 +95,10 @@ def add_caption(url_video: str, url_srt: str, worker_id: str = None) -> Dict[str
         normalized_srt = str(srt_path).replace('\\', '/').replace(':', '\\:')
 
         # FFmpeg command with GPU NVENC encoding - VBR mode
+        # Note: subtitles filter is incompatible with hwaccel_output_format cuda
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
-            '-hwaccel_output_format', 'cuda',  # Keep frames in GPU memory
             '-i', str(video_path),
             '-vf', f"subtitles=filename='{normalized_srt}'",
             '-c:v', 'h264_nvenc',
