@@ -1,11 +1,11 @@
 # RunPod Serverless Infrastructure
 
-## 🚀 Current Setup (2025-01-03 - Optimized for RTX A4500)
+## 🚀 Current Setup (2025-01-03 - Multi-GPU Optimized)
 
 ### Endpoint Details
-- **Endpoint ID**: `p7isgifi7oxix7`
+- **Endpoint ID**: `d6ho22viwcyjmk`
 - **Name**: `api-gpu-worker`
-- **API URL**: `https://api.runpod.ai/v2/p7isgifi7oxix7`
+- **API URL**: `https://api.runpod.ai/v2/d6ho22viwcyjmk`
 
 ### Template Details
 - **Template ID**: `t43fin4yne`
@@ -18,10 +18,12 @@
 
 ### Configuration
 - **Workers Min**: 0 (auto-scale to zero)
-- **Workers Max**: 3
-- **GPUs**: NVIDIA RTX A4500 (20GB VRAM, 12 vCPU, 62GB RAM)
+- **Workers Max**: 4 (increased from 3 for better throughput)
+- **GPUs**: Multi-GPU support
+  - Primary: NVIDIA RTX A4500 (20GB VRAM, 12 vCPU, 62GB RAM)
+  - Fallback: NVIDIA RTX A4000, AMPERE_16, AMPERE_24
 - **Scaler Type**: QUEUE_DELAY
-- **Scaler Value**: 4 seconds
+- **Scaler Value**: 3 seconds (optimized from 4s)
 
 ### Environment Variables
 ```bash
@@ -117,9 +119,9 @@ Adds audio to video with automatic duration synchronization.
 
 ## 🧪 Test Results
 
-### Test Job (2025-01-03)
+### Test Job (2025-01-03 - Multi-GPU Endpoint)
 ```bash
-curl -X POST "https://api.runpod.ai/v2/gsosg2ggw7sn22/run" \
+curl -X POST "https://api.runpod.ai/v2/d6ho22viwcyjmk/run" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -127,11 +129,16 @@ curl -X POST "https://api.runpod.ai/v2/gsosg2ggw7sn22/run" \
       "operation": "img2vid",
       "frame_rate": 30,
       "images": [
-        {"id": "test1", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
-        {"id": "test2", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
-        {"id": "test3", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
-        {"id": "test4", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
-        {"id": "test5", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0}
+        {"id": "img001", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img002", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img003", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img004", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img005", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img006", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img007", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img008", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img009", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "img010", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0}
       ]
     }
   }'
@@ -139,10 +146,11 @@ curl -X POST "https://api.runpod.ai/v2/gsosg2ggw7sn22/run" \
 
 **Result:**
 - ✅ Status: COMPLETED
-- ⏱️ Delay Time: 47.4s (cold start)
-- ⚡ Execution Time: 5.33s
-- 📦 Batches: 2 (batch 1: 3 images, batch 2: 2 images)
-- 📹 Output: 5 videos successfully downloaded from worker
+- ⏱️ Delay Time: 49.1s (cold start)
+- ⚡ Execution Time: 9.2s (~0.9s per image)
+- 📦 Batches: 2 (BATCH_SIZE=5: [1-5], [6-10])
+- 📹 Output: 10/10 videos successfully processed
+- 🖥️ Worker ID: chotnbf9yfward
 
 ---
 
@@ -170,7 +178,7 @@ curl -X POST "https://api.runpod.io/graphql" \
   -d '{
     "query": "mutation {
       updateEndpointTemplate(input: {
-        endpointId: \"p7isgifi7oxix7\",
+        endpointId: \"d6ho22viwcyjmk\",
         templateId: \"t43fin4yne\"
       }) {
         id name templateId
@@ -185,13 +193,13 @@ curl -X POST "https://api.runpod.io/graphql" \
 
 ### Check Endpoint Health
 ```bash
-curl "https://api.runpod.ai/v2/p7isgifi7oxix7/health" \
+curl "https://api.runpod.ai/v2/d6ho22viwcyjmk/health" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
 ### Check Job Status
 ```bash
-curl "https://api.runpod.ai/v2/p7isgifi7oxix7/status/{job_id}" \
+curl "https://api.runpod.ai/v2/d6ho22viwcyjmk/status/{job_id}" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -236,7 +244,7 @@ curl "https://api.runpod.ai/v2/p7isgifi7oxix7/status/{job_id}" \
 Add to `.env`:
 ```bash
 RUNPOD_API_KEY=your_runpod_api_key_here
-RUNPOD_ENDPOINT_ID=p7isgifi7oxix7
+RUNPOD_ENDPOINT_ID=d6ho22viwcyjmk
 RUNPOD_IDLE_TIMEOUT=300
 RUNPOD_MAX_TIMEOUT=480
 ```
