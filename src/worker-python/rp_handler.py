@@ -224,35 +224,46 @@ def image_to_video(image_id: str, image_url: str, duracao: float, frame_rate: in
 
 
 def process_img2vid_batch(images: List[Dict], frame_rate: int = 24, worker_id: str = None) -> Dict[str, Any]:
-    """Process multiple images to videos in parallel batches"""
+    """Process images to videos in sequential batches of BATCH_SIZE"""
     total = len(images)
-    logger.info(f"📦 Processing {total} images with batch size {BATCH_SIZE}, fps: {frame_rate}")
+    logger.info(f"📦 Processing {total} images in batches of {BATCH_SIZE}, fps: {frame_rate}")
 
     results = []
 
-    with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
-        futures = {
-            executor.submit(
-                image_to_video,
-                img['id'],
-                img['image_url'],
-                img['duracao'],
-                frame_rate,
-                worker_id
-            ): img for img in images
-        }
+    # Process in batches of BATCH_SIZE sequentially
+    for i in range(0, total, BATCH_SIZE):
+        batch = images[i:i + BATCH_SIZE]
+        batch_num = (i // BATCH_SIZE) + 1
+        total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
 
-        for future in as_completed(futures):
-            img = futures[future]
-            try:
-                result = future.result()
-                results.append(result)
-                logger.info(f"✅ Completed {len(results)}/{total}: {img['id']}")
-            except Exception as e:
-                logger.error(f"Failed to process {img['id']}: {e}")
-                raise
+        logger.info(f"🔄 Processing batch {batch_num}/{total_batches} ({len(batch)} images)")
 
-    logger.info(f"✅ All {total} images processed successfully")
+        # Process current batch in parallel
+        with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
+            futures = {
+                executor.submit(
+                    image_to_video,
+                    img['id'],
+                    img['image_url'],
+                    img['duracao'],
+                    frame_rate,
+                    worker_id
+                ): img for img in batch
+            }
+
+            for future in as_completed(futures):
+                img = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    logger.info(f"✅ Completed {len(results)}/{total}: {img['id']}")
+                except Exception as e:
+                    logger.error(f"Failed to process {img['id']}: {e}")
+                    raise
+
+        logger.info(f"✅ Batch {batch_num}/{total_batches} completed")
+
+    logger.info(f"✅ All {total} images processed successfully in {total_batches} batches")
 
     return {
         "message": "Images converted to videos successfully",

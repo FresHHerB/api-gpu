@@ -379,39 +379,71 @@ export class RunPodService {
   }
 
   /**
-   * Download video from worker HTTP server and save locally
+   * Download video from worker HTTP server and save locally with retry logic
    */
   private async downloadVideoFromWorker(videoUrl: string, filename: string): Promise<string> {
-    try {
-      logger.info('Downloading video from worker', { videoUrl, filename });
+    const maxRetries = 3;
+    const retryDelay = 2000; // 2 seconds between retries
 
-      // Download video from worker HTTP server
-      const response = await axios.get(videoUrl, {
-        responseType: 'arraybuffer',
-        timeout: 120000 // 2 min timeout for download
-      });
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        logger.info('Downloading video from worker', {
+          videoUrl,
+          filename,
+          attempt,
+          maxRetries
+        });
 
-      const videoBuffer = Buffer.from(response.data);
+        // Download video from worker HTTP server
+        const response = await axios.get(videoUrl, {
+          responseType: 'arraybuffer',
+          timeout: 180000, // 3 min timeout for download
+          maxRedirects: 5
+        });
 
-      // Save to local disk
-      const filepath = path.join(OUTPUT_DIR, filename);
-      await fs.writeFile(filepath, videoBuffer);
+        const videoBuffer = Buffer.from(response.data);
 
-      const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-      logger.info('Video downloaded and saved', {
-        filename,
-        sizeInMB: fileSizeMB
-      });
+        // Save to local disk
+        const filepath = path.join(OUTPUT_DIR, filename);
+        await fs.writeFile(filepath, videoBuffer);
 
-      return `/output/${filename}`;
-    } catch (error) {
-      logger.error('Failed to download video from worker', {
-        videoUrl,
-        filename,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-      throw new Error(`Failed to download video: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+        logger.info('Video downloaded and saved', {
+          filename,
+          sizeInMB: fileSizeMB,
+          attempt
+        });
+
+        return `/output/${filename}`;
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        logger.warn(`Download attempt ${attempt}/${maxRetries} failed`, {
+          videoUrl,
+          filename,
+          error: errorMessage
+        });
+
+        // If this was the last attempt, throw the error
+        if (attempt === maxRetries) {
+          logger.error('Failed to download video from worker after all retries', {
+            videoUrl,
+            filename,
+            attempts: maxRetries,
+            error: errorMessage
+          });
+          throw new Error(`Failed to download video after ${maxRetries} attempts: ${errorMessage}`);
+        }
+
+        // Wait before retrying (exponential backoff)
+        const delay = retryDelay * attempt;
+        logger.info(`Retrying in ${delay}ms...`, { attempt, filename });
+        await this.sleep(delay);
+      }
     }
+
+    throw new Error('Download failed: Max retries exceeded');
   }
 
   /**
