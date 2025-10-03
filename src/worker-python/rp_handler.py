@@ -480,10 +480,12 @@ def add_audio(
 
         logger.info(f"Speed adjustment: {speed_factor:.3f}x (pts={pts_multiplier:.6f})")
 
-        # FFmpeg command with GPU NVENC encoding and video speed adjustment
+        # FFmpeg command with NVENC encoding
+        # Note: CPU decode → CPU filter (setpts) → GPU encode (NVENC)
+        # We don't use -hwaccel cuda because setpts filter is CPU-only
+        # and causes "Impossible to convert between formats" error
         cmd = [
             'ffmpeg', '-y',
-            '-hwaccel', 'cuda',
             '-i', str(video_path),
             '-i', str(audio_path),
             '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
