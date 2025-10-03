@@ -76,7 +76,7 @@ def download_file(url: str, output_path: Path) -> None:
         raise
 
 
-def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
+def add_caption(url_video: str, url_srt: str, worker_id: str = None) -> Dict[str, Any]:
     """Add caption to video using FFmpeg with GPU acceleration"""
     video_id = str(uuid.uuid4())
     logger.info(f"Starting caption job: {video_id}")
@@ -91,16 +91,25 @@ def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
         download_file(url_video, video_path)
         download_file(url_srt, srt_path)
 
-        # FFmpeg command with GPU NVENC encoding
+        # Normalize SRT path for FFmpeg (escape colons)
+        normalized_srt = str(srt_path).replace('\\', '/').replace(':', '\\:')
+
+        # FFmpeg command with GPU NVENC encoding - VBR mode
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
             '-i', str(video_path),
-            '-vf', f"subtitles={srt_path}",
+            '-vf', f"subtitles=filename='{normalized_srt}'",
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-b:v', '5M',
+            '-tune', 'hq',
+            '-rc:v', 'vbr',
+            '-cq:v', '23',
+            '-b:v', '0',
+            '-maxrate', '10M',
+            '-bufsize', '20M',
             '-c:a', 'copy',
+            '-movflags', '+faststart',
             str(output_path)
         ]
 
@@ -114,8 +123,8 @@ def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
         logger.info(f"✅ Caption added: {output_filename} ({file_size_mb:.2f} MB)")
 
         # Return HTTP URL to access the video via RunPod proxy
-        if RUNPOD_POD_ID != 'localhost':
-            video_url = f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+        if worker_id:
+            video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
         else:
             video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
@@ -133,9 +142,9 @@ def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
         srt_path.unlink(missing_ok=True)
 
 
-def image_to_video(image_id: str, image_url: str, duracao: float, worker_id: str = None) -> Dict[str, Any]:
+def image_to_video(image_id: str, image_url: str, duracao: float, frame_rate: int = 24, worker_id: str = None) -> Dict[str, Any]:
     """Convert image to video with zoom effect using FFmpeg with GPU acceleration"""
-    logger.info(f"Converting image to video with zoom: {image_id}, duration: {duracao}s")
+    logger.info(f"Converting image to video with zoom: {image_id}, duration: {duracao}s, fps: {frame_rate}")
 
     image_path = WORK_DIR / f"{image_id}_image.jpg"
     output_filename = f"{image_id}_video.mp4"
@@ -146,7 +155,6 @@ def image_to_video(image_id: str, image_url: str, duracao: float, worker_id: str
         download_file(image_url, image_path)
 
         # Zoom parameters (1.0 -> 1.324 = 32.4% zoom)
-        frame_rate = 30
         total_frames = int(frame_rate * duracao)
         zoom_start = 1.0
         zoom_end = 1.324
@@ -215,10 +223,10 @@ def image_to_video(image_id: str, image_url: str, duracao: float, worker_id: str
         image_path.unlink(missing_ok=True)
 
 
-def process_img2vid_batch(images: List[Dict], worker_id: str = None) -> Dict[str, Any]:
+def process_img2vid_batch(images: List[Dict], frame_rate: int = 24, worker_id: str = None) -> Dict[str, Any]:
     """Process multiple images to videos in parallel batches"""
     total = len(images)
-    logger.info(f"📦 Processing {total} images with batch size {BATCH_SIZE}")
+    logger.info(f"📦 Processing {total} images with batch size {BATCH_SIZE}, fps: {frame_rate}")
 
     results = []
 
@@ -229,6 +237,7 @@ def process_img2vid_batch(images: List[Dict], worker_id: str = None) -> Dict[str
                 img['id'],
                 img['image_url'],
                 img['duracao'],
+                frame_rate,
                 worker_id
             ): img for img in images
         }
@@ -253,8 +262,32 @@ def process_img2vid_batch(images: List[Dict], worker_id: str = None) -> Dict[str
     }
 
 
-def add_audio(url_video: str, url_audio: str) -> Dict[str, Any]:
-    """Add audio to video using FFmpeg with GPU acceleration"""
+def get_duration(file_path: Path) -> float:
+    """Get duration of media file using ffprobe"""
+    try:
+        cmd = [
+            'ffprobe',
+            '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_format',
+            str(file_path)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        import json
+        metadata = json.loads(result.stdout)
+        duration = float(metadata['format']['duration'])
+
+        logger.info(f"Duration of {file_path.name}: {duration:.2f}s")
+        return duration
+
+    except Exception as e:
+        logger.error(f"Failed to get duration for {file_path}: {e}")
+        raise RuntimeError(f"Failed to get media duration: {e}")
+
+
+def add_audio(url_video: str, url_audio: str, worker_id: str = None) -> Dict[str, Any]:
+    """Add audio to video with duration synchronization using FFmpeg with GPU acceleration"""
     video_id = str(uuid.uuid4())
     logger.info(f"Starting audio job: {video_id}")
 
@@ -268,18 +301,39 @@ def add_audio(url_video: str, url_audio: str) -> Dict[str, Any]:
         download_file(url_video, video_path)
         download_file(url_audio, audio_path)
 
-        # FFmpeg command with GPU NVENC encoding
+        # Get durations
+        video_duration = get_duration(video_path)
+        audio_duration = get_duration(audio_path)
+
+        logger.info(f"Duration sync: video={video_duration:.2f}s, audio={audio_duration:.2f}s")
+
+        # Calculate speed adjustment factor
+        speed_factor = video_duration / audio_duration
+        pts_multiplier = 1 / speed_factor
+
+        logger.info(f"Speed adjustment: {speed_factor:.3f}x (pts={pts_multiplier:.6f})")
+
+        # FFmpeg command with GPU NVENC encoding and video speed adjustment
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
             '-i', str(video_path),
             '-i', str(audio_path),
+            '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[v];[v]format=nv12[vout]',
+            '-map', '[vout]',
+            '-map', '1:a',
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-b:v', '5M',
+            '-tune', 'hq',
+            '-rc:v', 'vbr',
+            '-cq:v', '23',
+            '-b:v', '0',
+            '-maxrate', '10M',
+            '-bufsize', '20M',
             '-c:a', 'aac',
             '-b:a', '192k',
             '-shortest',
+            '-movflags', '+faststart',
             str(output_path)
         ]
 
@@ -293,14 +347,15 @@ def add_audio(url_video: str, url_audio: str) -> Dict[str, Any]:
         logger.info(f"✅ Audio added: {output_filename} ({file_size_mb:.2f} MB)")
 
         # Return HTTP URL to access the video via RunPod proxy
-        if RUNPOD_POD_ID != 'localhost':
-            video_url = f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+        if worker_id:
+            video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
         else:
             video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
         return {
             'video_url': video_url,
-            'filename': output_filename
+            'filename': output_filename,
+            'speed_factor': round(speed_factor, 3)
         }
 
     except subprocess.CalledProcessError as e:
@@ -335,7 +390,7 @@ def handler(job: Dict) -> Dict[str, Any]:
             if not url_video or not url_srt:
                 raise ValueError("Missing required fields: url_video, url_srt")
 
-            result = add_caption(url_video, url_srt)
+            result = add_caption(url_video, url_srt, worker_id)
             return {
                 "success": True,
                 "video_url": result['video_url'],
@@ -345,11 +400,12 @@ def handler(job: Dict) -> Dict[str, Any]:
 
         elif operation == 'img2vid':
             images = job_input.get('images', [])
+            frame_rate = job_input.get('frame_rate', 24)  # Default 24 fps
 
             if not images:
                 raise ValueError("Missing required field: images")
 
-            result = process_img2vid_batch(images, worker_id)
+            result = process_img2vid_batch(images, frame_rate, worker_id)
             return {
                 "success": True,
                 **result
@@ -362,12 +418,13 @@ def handler(job: Dict) -> Dict[str, Any]:
             if not url_video or not url_audio:
                 raise ValueError("Missing required fields: url_video, url_audio")
 
-            result = add_audio(url_video, url_audio)
+            result = add_audio(url_video, url_audio, worker_id)
             return {
                 "success": True,
                 "video_url": result['video_url'],
                 "filename": result['filename'],
-                "message": "Audio added successfully"
+                "speed_factor": result['speed_factor'],
+                "message": "Audio added successfully with duration sync"
             }
 
         else:
