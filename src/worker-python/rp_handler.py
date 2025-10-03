@@ -111,9 +111,37 @@ def upload_to_s3(local_path: Path, bucket: str, s3_key: str) -> str:
 
 
 def download_file(url: str, output_path: Path) -> None:
-    """Download file from URL"""
+    """Download file from URL (optimized for S3/MinIO)"""
     logger.info(f"Downloading {url} to {output_path}")
+
     try:
+        # Parse S3 URL and use boto3 for S3/MinIO (faster, optimized)
+        # Expected formats:
+        # - http://minio.automear.com/canais/path/file.mp4
+        # - https://minio.automear.com/canais/path/file.mp4
+        if 'minio.automear.com' in url or S3_BUCKET_NAME in url:
+            # Extract bucket and key from URL
+            # Format: http://minio.automear.com/{bucket}/{key}
+            from urllib.parse import urlparse, unquote
+            parsed = urlparse(url)
+            path_parts = parsed.path.lstrip('/').split('/', 1)
+
+            if len(path_parts) == 2:
+                bucket = path_parts[0]
+                key = unquote(path_parts[1])  # Decode URL encoding
+
+                logger.info(f"📥 S3 download: bucket={bucket}, key={key}")
+                s3_client.download_file(bucket, key, str(output_path))
+
+                file_size = output_path.stat().st_size
+                logger.info(f"✅ S3 download completed: {output_path} ({file_size} bytes)")
+
+                if file_size == 0:
+                    raise ValueError(f"Downloaded file is empty: {url}")
+                return
+
+        # Fallback: Standard HTTP download for non-S3 URLs
+        logger.info(f"🌐 HTTP download: {url}")
         response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
         response.raise_for_status()
 
@@ -123,13 +151,19 @@ def download_file(url: str, output_path: Path) -> None:
                     f.write(chunk)
 
         file_size = output_path.stat().st_size
-        logger.info(f"Download completed: {output_path} ({file_size} bytes)")
+        logger.info(f"✅ HTTP download completed: {output_path} ({file_size} bytes)")
 
         if file_size == 0:
             raise ValueError(f"Downloaded file is empty: {url}")
 
+    except ClientError as e:
+        logger.error(f"❌ S3 download failed for {url}: {e}")
+        raise
     except requests.exceptions.RequestException as e:
-        logger.error(f"Download failed for {url}: {e}")
+        logger.error(f"❌ HTTP download failed for {url}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Download failed for {url}: {e}")
         raise
 
 
