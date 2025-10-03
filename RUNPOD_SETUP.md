@@ -1,15 +1,15 @@
 # RunPod Serverless Infrastructure
 
-## 🚀 Current Setup (2025-01-03)
+## 🚀 Current Setup (2025-01-03 - Optimized for RTX A4500)
 
 ### Endpoint Details
-- **Endpoint ID**: `gsosg2ggw7sn22`
+- **Endpoint ID**: `p7isgifi7oxix7`
 - **Name**: `api-gpu-worker`
-- **API URL**: `https://api.runpod.ai/v2/gsosg2ggw7sn22`
+- **API URL**: `https://api.runpod.ai/v2/p7isgifi7oxix7`
 
 ### Template Details
-- **Template ID**: `t7pnywsj4q`
-- **Name**: `api-gpu-worker-v2`
+- **Template ID**: `t43fin4yne`
+- **Name**: `api-gpu-worker-rtx-a4500`
 - **Docker Image**: `oreiasccp/api-gpu-worker:latest`
 - **Docker Args**: `python -u rp_handler.py`
 - **Container Disk**: 15GB
@@ -19,7 +19,7 @@
 ### Configuration
 - **Workers Min**: 0 (auto-scale to zero)
 - **Workers Max**: 3
-- **GPUs**: AMPERE_16, AMPERE_24, NVIDIA RTX A4000
+- **GPUs**: NVIDIA RTX A4500 (20GB VRAM, 12 vCPU, 62GB RAM)
 - **Scaler Type**: QUEUE_DELAY
 - **Scaler Value**: 4 seconds
 
@@ -27,7 +27,7 @@
 ```bash
 WORK_DIR=/tmp/work
 OUTPUT_DIR=/tmp/output
-BATCH_SIZE=3
+BATCH_SIZE=5  # Optimized for 12 vCPU
 HTTP_PORT=8000
 ```
 
@@ -36,10 +36,22 @@ HTTP_PORT=8000
 ## 📋 Supported Operations
 
 ### Batch Processing
-- **Batch Size**: 3 images per batch
+- **Batch Size**: 5 images per batch (optimized for RTX A4500 12 vCPU)
 - **Processing Mode**: Sequential batches (not parallel-all)
-- Example: 15 images = 5 sequential batches [1-3], [4-6], [7-9], [10-12], [13-15]
+- Example: 15 images = 3 sequential batches [1-5], [6-10], [11-15]
 - Each batch completes fully before next batch starts
+
+### Multi-Worker Strategy (Large Batches)
+- **Threshold**: >50 images automatically triggers multi-worker
+- **Distribution**: Splits across 3 workers in parallel
+- **Example 200 images**: 3 jobs × 67 images each = ~2 min (vs 6 min single worker)
+- **Example 300 images**: 3 jobs × 100 images each = ~3 min (vs 9 min single worker)
+
+### Performance Optimizations
+- **hwaccel_output_format cuda**: Keeps frames in GPU memory (30-50% faster)
+- **Polling timeout**: 60 attempts max (~8 min), 2s initial delay
+- **Server timeout**: 10 minutes (aligned with job timeouts)
+- **Resource monitoring**: Logs vCPU and RAM usage on startup
 
 ### 1. Caption (add_caption)
 Adds subtitles to video using FFmpeg with GPU NVENC encoding.
@@ -158,8 +170,8 @@ curl -X POST "https://api.runpod.io/graphql" \
   -d '{
     "query": "mutation {
       updateEndpointTemplate(input: {
-        endpointId: \"gsosg2ggw7sn22\",
-        templateId: \"t7pnywsj4q\"
+        endpointId: \"p7isgifi7oxix7\",
+        templateId: \"t43fin4yne\"
       }) {
         id name templateId
       }
@@ -173,13 +185,13 @@ curl -X POST "https://api.runpod.io/graphql" \
 
 ### Check Endpoint Health
 ```bash
-curl "https://api.runpod.ai/v2/gsosg2ggw7sn22/health" \
+curl "https://api.runpod.ai/v2/p7isgifi7oxix7/health" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
 ### Check Job Status
 ```bash
-curl "https://api.runpod.ai/v2/gsosg2ggw7sn22/status/{job_id}" \
+curl "https://api.runpod.ai/v2/p7isgifi7oxix7/status/{job_id}" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -224,9 +236,9 @@ curl "https://api.runpod.ai/v2/gsosg2ggw7sn22/status/{job_id}" \
 Add to `.env`:
 ```bash
 RUNPOD_API_KEY=your_runpod_api_key_here
-RUNPOD_ENDPOINT_ID=gsosg2ggw7sn22
+RUNPOD_ENDPOINT_ID=p7isgifi7oxix7
 RUNPOD_IDLE_TIMEOUT=300
-RUNPOD_MAX_TIMEOUT=600
+RUNPOD_MAX_TIMEOUT=480
 ```
 
 ---
