@@ -293,7 +293,7 @@ def image_to_video(
             output_path.unlink(missing_ok=True)
 
             return {
-                'id': image_id,
+                'id': str(video_index) if video_index is not None else image_id,
                 'video_url': video_url,
                 'filename': output_filename,
                 's3_key': s3_key
@@ -306,7 +306,7 @@ def image_to_video(
                 video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
             return {
-                'id': image_id,
+                'id': str(video_index) if video_index is not None else image_id,
                 'video_url': video_url,
                 'filename': output_filename
             }
@@ -450,10 +450,9 @@ def add_audio(
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
-            '-hwaccel_output_format', 'cuda',  # Keep frames in GPU memory
             '-i', str(video_path),
             '-i', str(audio_path),
-            '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[v];[v]format=nv12[vout]',
+            '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
             '-map', '[vout]',
             '-map', '1:a',
             '-c:v', 'h264_nvenc',
