@@ -53,10 +53,10 @@ router.post('/video/caption', authenticateApiKey, async (req: Request, res: Resp
     const data: CaptionRequest = req.body;
 
     // Validate request
-    if (!data.url_video || !data.url_srt) {
+    if (!data.url_video || !data.url_srt || !data.path || !data.output_filename) {
       res.status(400).json({
         error: 'Bad Request',
-        message: 'url_video and url_srt are required'
+        message: 'url_video, url_srt, path, and output_filename are required'
       });
       return;
     }
@@ -64,6 +64,8 @@ router.post('/video/caption', authenticateApiKey, async (req: Request, res: Resp
     logger.info('📹 Caption request received', {
       url_video: data.url_video,
       url_srt: data.url_srt,
+      path: data.path,
+      output_filename: data.output_filename,
       ip: req.ip
     });
 
@@ -125,11 +127,11 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
       }
     }
 
-    // S3 mode requires both bucket and path
-    if ((data.bucket && !data.path) || (!data.bucket && data.path)) {
+    // Validate S3 path is provided
+    if (!data.path) {
       res.status(400).json({
         error: 'Bad Request',
-        message: 'Both bucket and path are required for S3 upload mode'
+        message: 'path is required for S3 upload'
       });
       return;
     }
@@ -137,8 +139,6 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
     logger.info('🖼️ Img2Vid batch request received', {
       imageCount: data.images.length,
       images: data.images.map(i => ({ id: i.id, duracao: i.duracao })),
-      s3Mode: !!(data.bucket && data.path),
-      bucket: data.bucket,
       path: data.path,
       ip: req.ip
     });
@@ -182,10 +182,10 @@ router.post('/video/addaudio', authenticateApiKey, async (req: Request, res: Res
     const data: AddAudioRequest = req.body;
 
     // Validate request
-    if (!data.url_video || !data.url_audio) {
+    if (!data.url_video || !data.url_audio || !data.path || !data.output_filename) {
       res.status(400).json({
         error: 'Bad Request',
-        message: 'url_video and url_audio are required'
+        message: 'url_video, url_audio, path, and output_filename are required'
       });
       return;
     }
@@ -193,6 +193,8 @@ router.post('/video/addaudio', authenticateApiKey, async (req: Request, res: Res
     logger.info('🎵 AddAudio request received', {
       url_video: data.url_video,
       url_audio: data.url_audio,
+      path: data.path,
+      output_filename: data.output_filename,
       ip: req.ip
     });
 

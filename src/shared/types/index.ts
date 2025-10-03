@@ -9,6 +9,9 @@
 export interface CaptionRequest {
   url_video: string;
   url_srt: string;
+  path: string; // S3 path including /videos/ (e.g., "Sleepless Historian/Video Title/videos/")
+  output_filename: string; // Output filename (e.g., "video_legendado.mp4")
+  // bucket is read from S3_BUCKET_NAME env var
 }
 
 export interface Img2VidImage {
@@ -19,9 +22,10 @@ export interface Img2VidImage {
 
 export interface Img2VidRequest {
   images: Img2VidImage[];
-  bucket?: string; // S3 bucket name (e.g., "canais")
-  path?: string; // S3 path (e.g., "Sleepless Historian/Video Title")
+  path: string; // S3 path including /videos/temp/ (e.g., "Sleepless Historian/Video Title/videos/temp/")
   // frame_rate is fixed at 24fps
+  // output filenames are auto-generated: video_1.mp4, video_2.mp4, etc.
+  // bucket is read from S3_BUCKET_NAME env var
 }
 
 export interface Img2VidResponse {
@@ -43,6 +47,9 @@ export interface Img2VidResponse {
 export interface AddAudioRequest {
   url_video: string;
   url_audio: string;
+  path: string; // S3 path including /videos/ (e.g., "Sleepless Historian/Video Title/videos/")
+  output_filename: string; // Output filename (e.g., "video_e_audio.mp4")
+  // bucket is read from S3_BUCKET_NAME env var
 }
 
 export interface VideoResponse {

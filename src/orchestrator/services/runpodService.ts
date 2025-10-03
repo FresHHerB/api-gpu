@@ -103,7 +103,7 @@ export class RunPodService {
         durationSec: (durationMs / 1000).toFixed(2)
       });
 
-      // 3. Return results (worker uploads directly to S3 for img2vid)
+      // 3. Return results (all operations upload to S3)
       if (operation === 'img2vid' && result.output.videos) {
         logger.info(`✅ Videos uploaded to S3: ${result.output.videos.length} videos`);
 
@@ -131,17 +131,13 @@ export class RunPodService {
         };
       }
 
-      // For single video operations (caption, addaudio) - download from worker HTTP
-      await ensureOutputDir();
-      const localVideoUrl = await this.downloadVideoFromWorker(
-        result.output.video_url,
-        result.output.filename
-      );
+      // For single video operations (caption, addaudio) - return S3 URLs
+      logger.info(`✅ Video uploaded to S3: ${result.output.video_url}`);
 
       return {
         code: 200,
-        message: `Video ${operation} completed successfully`,
-        video_url: localVideoUrl,
+        message: `Video ${operation} completed and uploaded to S3 successfully`,
+        video_url: result.output.video_url,
         execution: {
           startTime: new Date(startTime).toISOString(),
           endTime: new Date(endTime).toISOString(),

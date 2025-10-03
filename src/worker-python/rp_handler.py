@@ -37,6 +37,7 @@ HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL', 'https://n8n-minio.gpqg9h.easypanel.host')
 S3_ACCESS_KEY = os.getenv('S3_ACCESS_KEY', 'admin')
 S3_SECRET_KEY = os.getenv('S3_SECRET_KEY', 'password')
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'canais')
 S3_REGION = os.getenv('S3_REGION', 'us-east-1')
 
 # Ensure directories exist
@@ -132,14 +133,19 @@ def download_file(url: str, output_path: Path) -> None:
         raise
 
 
-def add_caption(url_video: str, url_srt: str, worker_id: str = None) -> Dict[str, Any]:
-    """Add caption to video using FFmpeg with GPU acceleration"""
+def add_caption(
+    url_video: str,
+    url_srt: str,
+    path: str,
+    output_filename: str,
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """Add caption to video and upload to S3"""
     video_id = str(uuid.uuid4())
     logger.info(f"Starting caption job: {video_id}")
 
     video_path = WORK_DIR / f"{video_id}_input.mp4"
     srt_path = WORK_DIR / f"{video_id}_caption.srt"
-    output_filename = f"{video_id}_captioned.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     try:
@@ -179,15 +185,18 @@ def add_caption(url_video: str, url_srt: str, worker_id: str = None) -> Dict[str
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Caption added: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Return HTTP URL to access the video via RunPod proxy
-        if worker_id:
-            video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
-        else:
-            video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+        # Upload to S3
+        # S3 key: {path}{filename} (path already includes /videos/)
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local file after S3 upload
+        output_path.unlink(missing_ok=True)
 
         return {
             'video_url': video_url,
-            'filename': output_filename
+            'filename': output_filename,
+            's3_key': s3_key
         }
 
     except subprocess.CalledProcessError as e:
@@ -205,7 +214,6 @@ def image_to_video(
     duracao: float,
     frame_rate: int = 24,
     worker_id: str = None,
-    bucket: str = None,
     path: str = None,
     video_index: int = None
 ) -> Dict[str, Any]:
@@ -275,11 +283,11 @@ def image_to_video(
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Image to video completed: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Upload to S3 if bucket and path provided
-        if bucket and path:
-            # S3 key: {path}/videos/temp/{filename}
-            s3_key = f"{path}/videos/temp/{output_filename}"
-            video_url = upload_to_s3(output_path, bucket, s3_key)
+        # Upload to S3 if path provided
+        if path:
+            # S3 key: {path}{filename} (path already includes /videos/temp/)
+            s3_key = f"{path}{output_filename}"
+            video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
 
             # Cleanup local file after S3 upload
             output_path.unlink(missing_ok=True)
@@ -315,15 +323,14 @@ def process_img2vid_batch(
     images: List[Dict],
     frame_rate: int = 24,
     worker_id: str = None,
-    bucket: str = None,
     path: str = None
 ) -> Dict[str, Any]:
     """Process images to videos in sequential batches with S3 upload"""
     total = len(images)
     logger.info(f"📦 Processing {total} images in batches of {BATCH_SIZE}, fps: {frame_rate}")
 
-    if bucket and path:
-        logger.info(f"📤 S3 upload enabled: bucket={bucket}, path={path}/videos/temp/")
+    if path:
+        logger.info(f"📤 S3 upload enabled: bucket={S3_BUCKET_NAME}, path={path}")
 
     results = []
 
@@ -345,7 +352,6 @@ def process_img2vid_batch(
                     img['duracao'],
                     frame_rate,
                     worker_id,
-                    bucket,
                     path,
                     i + j + 1  # video_index: 1, 2, 3, etc.
                 ): (img, j) for j, img in enumerate(batch)
@@ -397,14 +403,19 @@ def get_duration(file_path: Path) -> float:
         raise RuntimeError(f"Failed to get media duration: {e}")
 
 
-def add_audio(url_video: str, url_audio: str, worker_id: str = None) -> Dict[str, Any]:
-    """Add audio to video with duration synchronization using FFmpeg with GPU acceleration"""
+def add_audio(
+    url_video: str,
+    url_audio: str,
+    path: str,
+    output_filename: str,
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """Add audio to video and upload to S3"""
     video_id = str(uuid.uuid4())
     logger.info(f"Starting audio job: {video_id}")
 
     video_path = WORK_DIR / f"{video_id}_video.mp4"
     audio_path = WORK_DIR / f"{video_id}_audio.mp3"
-    output_filename = f"{video_id}_with_audio.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     try:
@@ -458,16 +469,19 @@ def add_audio(url_video: str, url_audio: str, worker_id: str = None) -> Dict[str
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Audio added: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Return HTTP URL to access the video via RunPod proxy
-        if worker_id:
-            video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
-        else:
-            video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+        # Upload to S3
+        # S3 key: {path}{filename} (path already includes /videos/)
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local file after S3 upload
+        output_path.unlink(missing_ok=True)
 
         return {
             'video_url': video_url,
             'filename': output_filename,
-            'speed_factor': round(speed_factor, 3)
+            'speed_factor': round(speed_factor, 3),
+            's3_key': s3_key
         }
 
     except subprocess.CalledProcessError as e:
@@ -498,34 +512,32 @@ def handler(job: Dict) -> Dict[str, Any]:
         if operation == 'caption':
             url_video = job_input.get('url_video')
             url_srt = job_input.get('url_srt')
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
 
-            if not url_video or not url_srt:
-                raise ValueError("Missing required fields: url_video, url_srt")
+            if not url_video or not url_srt or not path or not output_filename:
+                raise ValueError("Missing required fields: url_video, url_srt, path, output_filename")
 
-            result = add_caption(url_video, url_srt, worker_id)
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            result = add_caption(url_video, url_srt, path, output_filename, worker_id)
             return {
                 "success": True,
                 "video_url": result['video_url'],
                 "filename": result['filename'],
-                "message": "Caption added successfully"
+                "s3_key": result['s3_key'],
+                "message": "Caption added and uploaded to S3 successfully"
             }
 
         elif operation == 'img2vid':
             images = job_input.get('images', [])
             frame_rate = job_input.get('frame_rate', 24)  # Default 24 fps
-            bucket = job_input.get('bucket')
             path = job_input.get('path')
 
-            if not images:
-                raise ValueError("Missing required field: images")
+            if not images or not path:
+                raise ValueError("Missing required fields: images, path")
 
-            # S3 upload mode requires bucket and path
-            if bucket and path:
-                logger.info(f"📤 S3 upload mode: bucket={bucket}, path={path}")
-                result = process_img2vid_batch(images, frame_rate, worker_id, bucket, path)
-            else:
-                logger.info("⚠️ Legacy HTTP mode (no bucket/path provided)")
-                result = process_img2vid_batch(images, frame_rate, worker_id)
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}")
+            result = process_img2vid_batch(images, frame_rate, worker_id, path)
 
             return {
                 "success": True,
@@ -535,17 +547,21 @@ def handler(job: Dict) -> Dict[str, Any]:
         elif operation == 'addaudio':
             url_video = job_input.get('url_video')
             url_audio = job_input.get('url_audio')
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
 
-            if not url_video or not url_audio:
-                raise ValueError("Missing required fields: url_video, url_audio")
+            if not url_video or not url_audio or not path or not output_filename:
+                raise ValueError("Missing required fields: url_video, url_audio, path, output_filename")
 
-            result = add_audio(url_video, url_audio, worker_id)
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            result = add_audio(url_video, url_audio, path, output_filename, worker_id)
             return {
                 "success": True,
                 "video_url": result['video_url'],
                 "filename": result['filename'],
                 "speed_factor": result['speed_factor'],
-                "message": "Audio added successfully with duration sync"
+                "s3_key": result['s3_key'],
+                "message": "Audio added and uploaded to S3 successfully"
             }
 
         else:
