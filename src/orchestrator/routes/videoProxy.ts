@@ -125,9 +125,21 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
       }
     }
 
+    // S3 mode requires both bucket and path
+    if ((data.bucket && !data.path) || (!data.bucket && data.path)) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'Both bucket and path are required for S3 upload mode'
+      });
+      return;
+    }
+
     logger.info('🖼️ Img2Vid batch request received', {
       imageCount: data.images.length,
       images: data.images.map(i => ({ id: i.id, duracao: i.duracao })),
+      s3Mode: !!(data.bucket && data.path),
+      bucket: data.bucket,
+      path: data.path,
       ip: req.ip
     });
 

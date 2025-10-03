@@ -19,6 +19,8 @@ export interface Img2VidImage {
 
 export interface Img2VidRequest {
   images: Img2VidImage[];
+  bucket?: string; // S3 bucket name (e.g., "canais")
+  path?: string; // S3 path (e.g., "Sleepless Historian/Video Title")
   // frame_rate is fixed at 24fps
 }
 

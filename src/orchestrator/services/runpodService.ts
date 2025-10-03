@@ -103,42 +103,18 @@ export class RunPodService {
         durationSec: (durationMs / 1000).toFixed(2)
       });
 
-      // 3. Download videos from worker HTTP server
-      await ensureOutputDir();
-
-      // For img2vid batch, download all videos
+      // 3. Return results (worker uploads directly to S3 for img2vid)
       if (operation === 'img2vid' && result.output.videos) {
-        const processedVideos = await Promise.all(
-          result.output.videos.map(async (video: any) => {
-            try {
-              const localUrl = await this.downloadVideoFromWorker(
-                video.video_url,
-                video.filename
-              );
-
-              logger.info('Video downloaded from worker', {
-                id: video.id,
-                localUrl
-              });
-
-              return {
-                id: video.id,
-                video_url: localUrl
-              };
-            } catch (error) {
-              logger.error('Failed to download video', {
-                id: video.id,
-                error: error instanceof Error ? error.message : 'Unknown error'
-              });
-              throw error;
-            }
-          })
-        );
+        logger.info(`✅ Videos uploaded to S3: ${result.output.videos.length} videos`);
 
         return {
           code: 200,
-          message: result.output.message || 'Images converted to videos successfully',
-          videos: processedVideos,
+          message: result.output.message || 'Images converted to videos and uploaded to S3 successfully',
+          videos: result.output.videos.map((v: any) => ({
+            id: v.id,
+            video_url: v.video_url,
+            filename: v.filename
+          })),
           execution: {
             startTime: new Date(startTime).toISOString(),
             endTime: new Date(endTime).toISOString(),
@@ -155,7 +131,8 @@ export class RunPodService {
         };
       }
 
-      // For single video operations (caption, addaudio)
+      // For single video operations (caption, addaudio) - download from worker HTTP
+      await ensureOutputDir();
       const localVideoUrl = await this.downloadVideoFromWorker(
         result.output.video_url,
         result.output.filename
@@ -279,9 +256,6 @@ export class RunPodService {
             executionTime: job.executionTime ? `${(job.executionTime / 1000).toFixed(1)}s` : undefined
           });
 
-          // IMPORTANT: Download videos immediately while worker is still alive
-          // RunPod serverless workers are destroyed shortly after job completion
-          logger.info('⏬ Downloading videos immediately before worker shutdown');
           return job;
         }
 
@@ -513,36 +487,15 @@ export class RunPodService {
 
     logger.info('✅ All jobs completed, merging results');
 
-    // Download all videos from all workers
-    await ensureOutputDir();
-
+    // Collect all videos from all workers (already uploaded to S3)
     const allVideos: any[] = [];
-
     for (const result of results) {
       if (result.output.videos) {
-        const processedVideos = await Promise.all(
-          result.output.videos.map(async (video: any) => {
-            try {
-              const localUrl = await this.downloadVideoFromWorker(
-                video.video_url,
-                video.filename
-              );
-
-              return {
-                id: video.id,
-                video_url: localUrl
-              };
-            } catch (error) {
-              logger.error('Failed to download video', {
-                id: video.id,
-                error: error instanceof Error ? error.message : 'Unknown error'
-              });
-              throw error;
-            }
-          })
-        );
-
-        allVideos.push(...processedVideos);
+        allVideos.push(...result.output.videos.map((v: any) => ({
+          id: v.id,
+          video_url: v.video_url,
+          filename: v.filename
+        })));
       }
     }
 
@@ -558,8 +511,7 @@ export class RunPodService {
 
     return {
       code: 200,
-      message: `${totalImages} images processed across ${workerBatches.length} workers`,
-      video_url: '', // Multi-worker returns videos array below
+      message: `${totalImages} images processed across ${workerBatches.length} workers and uploaded to S3`,
       videos: allVideos,
       execution: {
         startTime: new Date(startTime).toISOString(),
@@ -573,6 +525,6 @@ export class RunPodService {
         imagesPerWorker: IMAGES_PER_WORKER,
         processed: allVideos.length
       }
-    } as any;
+    };
   }
 }

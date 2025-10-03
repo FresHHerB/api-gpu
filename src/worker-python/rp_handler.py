@@ -11,6 +11,9 @@ import logging
 import subprocess
 import requests
 import uuid
+import time
+import boto3
+from botocore.exceptions import ClientError
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,11 +33,27 @@ OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '5'))  # Optimized for RTX A4500 (12 vCPU)
 HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
+# S3/MinIO Configuration
+S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL', 'https://n8n-minio.gpqg9h.easypanel.host')
+S3_ACCESS_KEY = os.getenv('S3_ACCESS_KEY', 'admin')
+S3_SECRET_KEY = os.getenv('S3_SECRET_KEY', 'password')
+S3_REGION = os.getenv('S3_REGION', 'us-east-1')
+
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# HTTP Server for serving videos
+# Initialize S3 client
+s3_client = boto3.client(
+    's3',
+    endpoint_url=S3_ENDPOINT_URL,
+    aws_access_key_id=S3_ACCESS_KEY,
+    aws_secret_access_key=S3_SECRET_KEY,
+    region_name=S3_REGION,
+    config=boto3.session.Config(signature_version='s3v4')
+)
+
+# HTTP Server for serving videos (caption/addaudio only)
 class VideoHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(OUTPUT_DIR), **kwargs)
@@ -51,6 +70,43 @@ def start_http_server():
 # Start HTTP server in background thread
 http_thread = threading.Thread(target=start_http_server, daemon=True)
 http_thread.start()
+
+
+def upload_to_s3(local_path: Path, bucket: str, s3_key: str) -> str:
+    """
+    Upload file to S3/MinIO and return public URL
+    Args:
+        local_path: Local file path
+        bucket: S3 bucket name
+        s3_key: S3 object key (path in bucket)
+    Returns:
+        Public URL of uploaded file
+    """
+    try:
+        logger.info(f"📤 Uploading to S3: {bucket}/{s3_key}")
+
+        # Upload file with public-read ACL
+        s3_client.upload_file(
+            str(local_path),
+            bucket,
+            s3_key,
+            ExtraArgs={'ACL': 'public-read', 'ContentType': 'video/mp4'}
+        )
+
+        # Construct public URL
+        public_url = f"{S3_ENDPOINT_URL}/{bucket}/{s3_key}"
+
+        file_size_mb = local_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ S3 upload complete: {s3_key} ({file_size_mb:.2f} MB)")
+
+        return public_url
+
+    except ClientError as e:
+        logger.error(f"❌ S3 upload failed: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error during S3 upload: {e}")
+        raise
 
 
 def download_file(url: str, output_path: Path) -> None:
@@ -143,12 +199,27 @@ def add_caption(url_video: str, url_srt: str, worker_id: str = None) -> Dict[str
         srt_path.unlink(missing_ok=True)
 
 
-def image_to_video(image_id: str, image_url: str, duracao: float, frame_rate: int = 24, worker_id: str = None) -> Dict[str, Any]:
-    """Convert image to video with zoom effect using FFmpeg with GPU acceleration"""
+def image_to_video(
+    image_id: str,
+    image_url: str,
+    duracao: float,
+    frame_rate: int = 24,
+    worker_id: str = None,
+    bucket: str = None,
+    path: str = None,
+    video_index: int = None
+) -> Dict[str, Any]:
+    """Convert image to video with zoom effect and upload to S3"""
     logger.info(f"Converting image to video with zoom: {image_id}, duration: {duracao}s, fps: {frame_rate}")
 
     image_path = WORK_DIR / f"{image_id}_image.jpg"
-    output_filename = f"{image_id}_video.mp4"
+
+    # Use video_index for filename if provided (e.g., video_1.mp4)
+    if video_index is not None:
+        output_filename = f"video_{video_index}.mp4"
+    else:
+        output_filename = f"{image_id}_video.mp4"
+
     output_path = OUTPUT_DIR / output_filename
 
     try:
@@ -204,17 +275,33 @@ def image_to_video(image_id: str, image_url: str, duracao: float, frame_rate: in
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         logger.info(f"✅ Image to video completed: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Return HTTP URL to access the video via RunPod proxy
-        if worker_id:
-            video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
-        else:
-            video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+        # Upload to S3 if bucket and path provided
+        if bucket and path:
+            # S3 key: {path}/videos/temp/{filename}
+            s3_key = f"{path}/videos/temp/{output_filename}"
+            video_url = upload_to_s3(output_path, bucket, s3_key)
 
-        return {
-            'id': image_id,
-            'video_url': video_url,
-            'filename': output_filename
-        }
+            # Cleanup local file after S3 upload
+            output_path.unlink(missing_ok=True)
+
+            return {
+                'id': image_id,
+                'video_url': video_url,
+                'filename': output_filename,
+                's3_key': s3_key
+            }
+        else:
+            # Fallback to HTTP URL (legacy mode)
+            if worker_id:
+                video_url = f"https://{worker_id}-{HTTP_PORT}.proxy.runpod.net/{output_filename}"
+            else:
+                video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+
+            return {
+                'id': image_id,
+                'video_url': video_url,
+                'filename': output_filename
+            }
 
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg error: {e.stderr}")
@@ -224,10 +311,19 @@ def image_to_video(image_id: str, image_url: str, duracao: float, frame_rate: in
         image_path.unlink(missing_ok=True)
 
 
-def process_img2vid_batch(images: List[Dict], frame_rate: int = 24, worker_id: str = None) -> Dict[str, Any]:
-    """Process images to videos in sequential batches of BATCH_SIZE"""
+def process_img2vid_batch(
+    images: List[Dict],
+    frame_rate: int = 24,
+    worker_id: str = None,
+    bucket: str = None,
+    path: str = None
+) -> Dict[str, Any]:
+    """Process images to videos in sequential batches with S3 upload"""
     total = len(images)
     logger.info(f"📦 Processing {total} images in batches of {BATCH_SIZE}, fps: {frame_rate}")
+
+    if bucket and path:
+        logger.info(f"📤 S3 upload enabled: bucket={bucket}, path={path}/videos/temp/")
 
     results = []
 
@@ -248,12 +344,15 @@ def process_img2vid_batch(images: List[Dict], frame_rate: int = 24, worker_id: s
                     img['image_url'],
                     img['duracao'],
                     frame_rate,
-                    worker_id
-                ): img for img in batch
+                    worker_id,
+                    bucket,
+                    path,
+                    i + j + 1  # video_index: 1, 2, 3, etc.
+                ): (img, j) for j, img in enumerate(batch)
             }
 
             for future in as_completed(futures):
-                img = futures[future]
+                img, j = futures[future]
                 try:
                     result = future.result()
                     results.append(result)
@@ -414,11 +513,20 @@ def handler(job: Dict) -> Dict[str, Any]:
         elif operation == 'img2vid':
             images = job_input.get('images', [])
             frame_rate = job_input.get('frame_rate', 24)  # Default 24 fps
+            bucket = job_input.get('bucket')
+            path = job_input.get('path')
 
             if not images:
                 raise ValueError("Missing required field: images")
 
-            result = process_img2vid_batch(images, frame_rate, worker_id)
+            # S3 upload mode requires bucket and path
+            if bucket and path:
+                logger.info(f"📤 S3 upload mode: bucket={bucket}, path={path}")
+                result = process_img2vid_batch(images, frame_rate, worker_id, bucket, path)
+            else:
+                logger.info("⚠️ Legacy HTTP mode (no bucket/path provided)")
+                result = process_img2vid_batch(images, frame_rate, worker_id)
+
             return {
                 "success": True,
                 **result

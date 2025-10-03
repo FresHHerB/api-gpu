@@ -1,15 +1,15 @@
 # RunPod Serverless Infrastructure
 
-## 🚀 Current Setup (2025-01-03 - Production Ready)
+## 🚀 Current Setup (2025-10-03 - Production Ready with Shutdown Signal)
 
 ### Endpoint Details
-- **Endpoint ID**: `1j30rstqhtt86u`
+- **Endpoint ID**: `sapyj7q0gtvenl`
 - **Name**: `api-gpu-worker`
-- **API URL**: `https://api.runpod.ai/v2/1j30rstqhtt86u`
+- **API URL**: `https://api.runpod.ai/v2/sapyj7q0gtvenl`
 
 ### Template Details
-- **Template ID**: `cbs92eapla`
-- **Name**: `api-gpu-worker-production`
+- **Template ID**: `3k8hmadsgl`
+- **Name**: `api-gpu-worker-v2`
 - **Docker Image**: `oreiasccp/api-gpu-worker:latest` (digest: df3877f10c76...)
 - **Docker Args**: `python -u rp_handler.py`
 - **Container Disk**: 15GB
@@ -54,6 +54,11 @@ HTTP_PORT=8000
 - **Polling timeout**: 60 attempts max (~8 min), 2s initial delay
 - **Server timeout**: 10 minutes (aligned with job timeouts)
 - **Resource monitoring**: Logs vCPU and RAM usage on startup
+- **Sequential downloads**: VPS downloads videos one-by-one to prevent worker overload
+- **Worker shutdown signal**: Worker waits for VPS to complete downloads before terminating
+  - VPS signals worker via POST to `/shutdown-ready` when all downloads complete
+  - Worker timeout: max 3 minutes (10s per video)
+  - Prevents 502/404 errors from worker terminating during downloads
 
 ### 1. Caption (add_caption)
 Adds subtitles to video using FFmpeg with GPU NVENC encoding.
@@ -200,8 +205,8 @@ curl -X POST "https://api.runpod.io/graphql" \
   -d '{
     "query": "mutation {
       updateEndpointTemplate(input: {
-        endpointId: \"1j30rstqhtt86u\",
-        templateId: \"cbs92eapla\"
+        endpointId: \"sapyj7q0gtvenl\",
+        templateId: \"3k8hmadsgl\"
       }) {
         id name templateId
       }
@@ -215,13 +220,13 @@ curl -X POST "https://api.runpod.io/graphql" \
 
 ### Check Endpoint Health
 ```bash
-curl "https://api.runpod.ai/v2/1j30rstqhtt86u/health" \
+curl "https://api.runpod.ai/v2/sapyj7q0gtvenl/health" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
 ### Check Job Status
 ```bash
-curl "https://api.runpod.ai/v2/1j30rstqhtt86u/status/{job_id}" \
+curl "https://api.runpod.ai/v2/sapyj7q0gtvenl/status/{job_id}" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -266,7 +271,7 @@ curl "https://api.runpod.ai/v2/1j30rstqhtt86u/status/{job_id}" \
 Add to `.env`:
 ```bash
 RUNPOD_API_KEY=your_runpod_api_key_here
-RUNPOD_ENDPOINT_ID=1j30rstqhtt86u
+RUNPOD_ENDPOINT_ID=sapyj7q0gtvenl
 RUNPOD_IDLE_TIMEOUT=300
 RUNPOD_MAX_TIMEOUT=480
 ```
