@@ -323,11 +323,20 @@ def process_img2vid_batch(
     images: List[Dict],
     frame_rate: int = 24,
     worker_id: str = None,
-    path: str = None
+    path: str = None,
+    start_index: int = 0
 ) -> Dict[str, Any]:
-    """Process images to videos in sequential batches with S3 upload"""
+    """Process images to videos in sequential batches with S3 upload
+
+    Args:
+        images: List of image dictionaries
+        frame_rate: Video frame rate (default: 24)
+        worker_id: Worker identifier
+        path: S3 path for uploads
+        start_index: Global start index for multi-worker scenarios (default: 0)
+    """
     total = len(images)
-    logger.info(f"📦 Processing {total} images in batches of {BATCH_SIZE}, fps: {frame_rate}")
+    logger.info(f"📦 Processing {total} images in batches of {BATCH_SIZE}, fps: {frame_rate}, start_index: {start_index}")
 
     if path:
         logger.info(f"📤 S3 upload enabled: bucket={S3_BUCKET_NAME}, path={path}")
@@ -354,7 +363,7 @@ def process_img2vid_batch(
                     frame_rate,
                     worker_id,
                     path,
-                    i + j + 1  # video_index: 1, 2, 3, etc.
+                    start_index + i + j + 1  # video_index with global offset
                 ) for j, img in enumerate(batch)
             ]
 
@@ -534,12 +543,13 @@ def handler(job: Dict) -> Dict[str, Any]:
             images = job_input.get('images', [])
             frame_rate = job_input.get('frame_rate', 24)  # Default 24 fps
             path = job_input.get('path')
+            start_index = job_input.get('start_index', 0)  # Global start index for multi-worker
 
             if not images or not path:
                 raise ValueError("Missing required fields: images, path")
 
-            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}")
-            result = process_img2vid_batch(images, frame_rate, worker_id, path)
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, start_index={start_index}")
+            result = process_img2vid_batch(images, frame_rate, worker_id, path, start_index)
 
             return {
                 "success": True,

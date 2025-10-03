@@ -381,18 +381,25 @@ export class RunPodService {
       imagesPerWorker: IMAGES_PER_WORKER
     });
 
-    // Split images into chunks
-    const workerBatches: any[][] = [];
+    // Split images into chunks with start_index for each worker
+    const workerBatches: Array<{ images: any[], startIndex: number }> = [];
     for (let i = 0; i < totalImages; i += IMAGES_PER_WORKER) {
-      workerBatches.push(images.slice(i, i + IMAGES_PER_WORKER));
+      workerBatches.push({
+        images: images.slice(i, i + IMAGES_PER_WORKER),
+        startIndex: i  // Global index where this worker should start numbering
+      });
     }
 
     logger.info(`📦 Created ${workerBatches.length} worker batches`);
 
-    // Submit all jobs in parallel
+    // Submit all jobs in parallel with start_index
     const jobPromises = workerBatches.map((batch, idx) => {
-      logger.info(`🚀 Submitting job ${idx + 1}/${workerBatches.length} with ${batch.length} images`);
-      return this.submitJob(operation, { ...data, images: batch });
+      logger.info(`🚀 Submitting job ${idx + 1}/${workerBatches.length} with ${batch.images.length} images (start_index: ${batch.startIndex})`);
+      return this.submitJob(operation, {
+        ...data,
+        images: batch.images,
+        start_index: batch.startIndex  // Pass global start index to worker
+      });
     });
 
     const jobs = await Promise.all(jobPromises);
