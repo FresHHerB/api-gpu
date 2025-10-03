@@ -201,7 +201,7 @@ export class RunPodService {
    */
   private async pollJobStatus(
     jobId: string,
-    maxAttempts: number = 60 // ~8min max (optimized for RTX A4500)
+    maxAttempts: number = 90 // ~12min max (optimized for multi-worker batches)
   ): Promise<RunPodJobResponse> {
     let attempt = 0;
     let delay = 2000; // Start with 2s (more responsive)

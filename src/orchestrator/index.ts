@@ -138,15 +138,15 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   startCleanupScheduler();
 });
 
-// Set server timeout to 10 minutes (600000ms) to handle long video processing
-// Optimized for RTX A4500 workers with polling timeout of ~8 minutes
-server.timeout = 600000; // 10 min
-server.keepAliveTimeout = 610000; // Slightly higher than timeout
-server.headersTimeout = 620000; // Higher than keepAliveTimeout
+// Set server timeout to 15 minutes (900000ms) to handle long video processing
+// Optimized for multi-worker batches that can take 10-12 minutes
+server.timeout = 900000; // 15 min
+server.keepAliveTimeout = 910000; // Slightly higher than timeout
+server.headersTimeout = 920000; // Higher than keepAliveTimeout
 
 logger.info('⏱️ Server timeouts configured', {
-  timeout: '10 minutes',
-  keepAlive: '10.17 minutes',
+  timeout: '15 minutes',
+  keepAlive: '15.17 minutes',
   headers: '10.33 minutes'
 });
 
