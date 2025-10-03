@@ -16,11 +16,11 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-# Copiar package.json
-COPY package*.json ./
+# Copiar package files
+COPY package.json package-lock.json ./
 
 # Instalar dependências (incluindo dev para build)
-RUN npm ci
+RUN npm install
 
 # Copiar código orchestrator + shared
 COPY src/orchestrator ./src/orchestrator
