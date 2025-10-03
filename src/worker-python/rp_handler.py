@@ -134,8 +134,8 @@ def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
 
 
 def image_to_video(image_id: str, image_url: str, duracao: float, worker_id: str = None) -> Dict[str, Any]:
-    """Convert image to video using FFmpeg with GPU acceleration"""
-    logger.info(f"Converting image to video: {image_id}, duration: {duracao}s")
+    """Convert image to video with zoom effect using FFmpeg with GPU acceleration"""
+    logger.info(f"Converting image to video with zoom: {image_id}, duration: {duracao}s")
 
     image_path = WORK_DIR / f"{image_id}_image.jpg"
     output_filename = f"{image_id}_video.mp4"
@@ -145,17 +145,44 @@ def image_to_video(image_id: str, image_url: str, duracao: float, worker_id: str
         # Download image
         download_file(image_url, image_path)
 
-        # FFmpeg command with GPU NVENC encoding
+        # Zoom parameters (1.0 -> 1.324 = 32.4% zoom)
+        frame_rate = 30
+        total_frames = int(frame_rate * duracao)
+        zoom_start = 1.0
+        zoom_end = 1.324
+        zoom_diff = zoom_end - zoom_start
+        upscale_factor = 6
+        upscale_width = 1920 * upscale_factor  # 11520
+        upscale_height = 1080 * upscale_factor  # 6480
+
+        # Video filter with zoom effect
+        video_filter = (
+            f"scale={upscale_width}:{upscale_height}:flags=lanczos,"
+            f"zoompan=z='min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})'"
+            f":d={total_frames}"
+            f":x='trunc(iw/2-(iw/zoom/2))'"
+            f":y='trunc(ih/2-(ih/zoom/2))'"
+            f":s=1920x1080"
+            f":fps={frame_rate},"
+            f"format=nv12"
+        )
+
+        # FFmpeg command with GPU NVENC encoding and zoom
         cmd = [
             'ffmpeg', '-y',
+            '-framerate', str(frame_rate),
             '-loop', '1',
             '-i', str(image_path),
-            '-t', str(duracao),
+            '-vf', video_filter,
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-b:v', '5M',
-            '-pix_fmt', 'yuv420p',
-            '-r', '30',
+            '-tune', 'hq',
+            '-rc:v', 'vbr',
+            '-cq:v', '23',
+            '-b:v', '0',
+            '-maxrate', '10M',
+            '-bufsize', '20M',
+            '-t', str(duracao),
             str(output_path)
         ]
 
