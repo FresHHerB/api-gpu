@@ -1,16 +1,16 @@
 # RunPod Serverless Infrastructure
 
-## 🚀 Current Setup (2025-01-03 - Multi-GPU Optimized)
+## 🚀 Current Setup (2025-01-03 - Production Ready)
 
 ### Endpoint Details
-- **Endpoint ID**: `d6ho22viwcyjmk`
+- **Endpoint ID**: `1j30rstqhtt86u`
 - **Name**: `api-gpu-worker`
-- **API URL**: `https://api.runpod.ai/v2/d6ho22viwcyjmk`
+- **API URL**: `https://api.runpod.ai/v2/1j30rstqhtt86u`
 
 ### Template Details
-- **Template ID**: `t43fin4yne`
-- **Name**: `api-gpu-worker-rtx-a4500`
-- **Docker Image**: `oreiasccp/api-gpu-worker:latest`
+- **Template ID**: `cbs92eapla`
+- **Name**: `api-gpu-worker-production`
+- **Docker Image**: `oreiasccp/api-gpu-worker:latest` (digest: df3877f10c76...)
 - **Docker Args**: `python -u rp_handler.py`
 - **Container Disk**: 15GB
 - **Serverless**: Yes
@@ -18,12 +18,12 @@
 
 ### Configuration
 - **Workers Min**: 0 (auto-scale to zero)
-- **Workers Max**: 4 (increased from 3 for better throughput)
-- **GPUs**: Multi-GPU support
+- **Workers Max**: 4
+- **GPUs**: Multi-GPU support (high availability)
   - Primary: NVIDIA RTX A4500 (20GB VRAM, 12 vCPU, 62GB RAM)
   - Fallback: NVIDIA RTX A4000, AMPERE_16, AMPERE_24
 - **Scaler Type**: QUEUE_DELAY
-- **Scaler Value**: 3 seconds (optimized from 4s)
+- **Scaler Value**: 3 seconds
 
 ### Environment Variables
 ```bash
@@ -119,9 +119,9 @@ Adds audio to video with automatic duration synchronization.
 
 ## 🧪 Test Results
 
-### Test Job (2025-01-03 - Multi-GPU Endpoint)
+### Test Job 1: img2vid (2025-01-03)
 ```bash
-curl -X POST "https://api.runpod.ai/v2/d6ho22viwcyjmk/run" \
+curl -X POST "https://api.runpod.ai/v2/1j30rstqhtt86u/run" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -152,6 +152,28 @@ curl -X POST "https://api.runpod.ai/v2/d6ho22viwcyjmk/run" \
 - 📹 Output: 10/10 videos successfully processed
 - 🖥️ Worker ID: chotnbf9yfward
 
+### Test Job 2: caption (2025-01-03)
+```bash
+curl -X POST "https://api.runpod.ai/v2/1j30rstqhtt86u/run" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": {
+      "operation": "caption",
+      "url_video": "http://minio.automear.com/canais/video.mp4",
+      "url_srt": "https://minio.automear.com/canais/subtitles.srt"
+    }
+  }'
+```
+
+**Result:**
+- ✅ Status: COMPLETED
+- ⏱️ Delay Time: 37.5s (cold start)
+- ⚡ Execution Time: 137s (~2min 17s for 33min video)
+- 📹 Output: Captioned video with GPU NVENC encoding
+- 🖥️ Worker ID: rsow1t3deak2sx
+- ⚙️ Note: Uses `-hwaccel cuda` (GPU decode) without `-hwaccel_output_format cuda` (incompatible with subtitles filter)
+
 ---
 
 ## 🔧 How to Update Worker
@@ -178,8 +200,8 @@ curl -X POST "https://api.runpod.io/graphql" \
   -d '{
     "query": "mutation {
       updateEndpointTemplate(input: {
-        endpointId: \"d6ho22viwcyjmk\",
-        templateId: \"t43fin4yne\"
+        endpointId: \"1j30rstqhtt86u\",
+        templateId: \"cbs92eapla\"
       }) {
         id name templateId
       }
@@ -193,13 +215,13 @@ curl -X POST "https://api.runpod.io/graphql" \
 
 ### Check Endpoint Health
 ```bash
-curl "https://api.runpod.ai/v2/d6ho22viwcyjmk/health" \
+curl "https://api.runpod.ai/v2/1j30rstqhtt86u/health" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
 ### Check Job Status
 ```bash
-curl "https://api.runpod.ai/v2/d6ho22viwcyjmk/status/{job_id}" \
+curl "https://api.runpod.ai/v2/1j30rstqhtt86u/status/{job_id}" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -244,7 +266,7 @@ curl "https://api.runpod.ai/v2/d6ho22viwcyjmk/status/{job_id}" \
 Add to `.env`:
 ```bash
 RUNPOD_API_KEY=your_runpod_api_key_here
-RUNPOD_ENDPOINT_ID=d6ho22viwcyjmk
+RUNPOD_ENDPOINT_ID=1j30rstqhtt86u
 RUNPOD_IDLE_TIMEOUT=300
 RUNPOD_MAX_TIMEOUT=480
 ```
