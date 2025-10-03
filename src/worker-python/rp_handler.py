@@ -1,7 +1,7 @@
 """
 RunPod Serverless Handler for GPU Video Processing
 Handles: caption, img2vid (batch), addaudio operations
-Serves processed videos via HTTP for VPS download
+Returns video data as base64 for VPS download
 """
 
 import runpod
@@ -11,12 +11,10 @@ import logging
 import subprocess
 import requests
 import uuid
+import base64
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from threading import Thread
-import socket
 
 # Setup logging
 logging.basicConfig(
@@ -30,17 +28,9 @@ WORK_DIR = Path(os.getenv('WORK_DIR', '/tmp/work'))
 OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '3'))
 
-# HTTP Server Configuration
-HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
-RUNPOD_POD_ID = os.getenv('RUNPOD_POD_ID', 'unknown')
-
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-# Global HTTP server
-http_server = None
-server_thread = None
 
 
 def download_file(url: str, output_path: Path) -> None:
@@ -85,8 +75,8 @@ def run_ffmpeg(args: List[str]) -> None:
     logger.info("FFmpeg completed successfully")
 
 
-def add_caption(url_video: str, url_srt: str) -> str:
-    """Add captions to video"""
+def add_caption(url_video: str, url_srt: str) -> Dict[str, str]:
+    """Add captions to video and return base64"""
     job_id = str(uuid.uuid4())
     video_path = WORK_DIR / f"{job_id}_input.mp4"
     srt_path = WORK_DIR / f"{job_id}_sub.srt"
@@ -112,13 +102,19 @@ def add_caption(url_video: str, url_srt: str) -> str:
             str(output_path)
         ])
 
-        # Cleanup inputs
+        # Encode to base64
+        video_base64 = encode_video_to_base64(output_path)
+
+        # Cleanup
         video_path.unlink(missing_ok=True)
         srt_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
 
-        # Return URL for VPS to download
-        base_url = get_worker_public_url()
-        return f"{base_url}/{output_filename}"
+        logger.info(f"✅ Caption completed: {job_id}")
+        return {
+            'video_base64': video_base64,
+            'filename': output_filename
+        }
 
     except Exception as e:
         logger.error(f"Caption failed: {e}")
@@ -129,59 +125,24 @@ def add_caption(url_video: str, url_srt: str) -> str:
         raise
 
 
-def get_worker_public_url() -> str:
-    """Get worker's public URL for serving files"""
-    # RunPod provides public URL via environment variable
-    public_url = os.getenv('RUNPOD_PUBLIC_URL', '')
-
-    if public_url:
-        return public_url.rstrip('/')
-
-    # Fallback: try to get pod hostname
+def encode_video_to_base64(video_path: Path) -> str:
+    """Encode video file to base64 string"""
     try:
-        hostname = socket.gethostname()
-        # RunPod format: {pod_id}-{port}.proxy.runpod.net
-        return f"https://{RUNPOD_POD_ID}-{HTTP_PORT}.proxy.runpod.net"
-    except:
-        logger.warning("Could not determine public URL, using localhost")
-        return f"http://localhost:{HTTP_PORT}"
+        with open(video_path, 'rb') as f:
+            video_bytes = f.read()
+            video_base64 = base64.b64encode(video_bytes).decode('utf-8')
 
+        file_size_mb = len(video_bytes) / (1024 * 1024)
+        base64_size_mb = len(video_base64) / (1024 * 1024)
 
-def start_http_server():
-    """Start HTTP server to serve output files"""
-    global http_server, server_thread
+        logger.info(f"📦 Encoded video: {video_path.name}")
+        logger.info(f"   Original: {file_size_mb:.2f} MB")
+        logger.info(f"   Base64: {base64_size_mb:.2f} MB ({(base64_size_mb/file_size_mb):.1f}x)")
 
-    if http_server is not None:
-        logger.info("HTTP server already running")
-        return  # Already running
-
-    class Handler(SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(OUTPUT_DIR), **kwargs)
-
-        def log_message(self, format, *args):
-            logger.info(f"HTTP REQUEST: {format % args}")
-
-        def do_GET(self):
-            logger.info(f"GET request for: {self.path}")
-            super().do_GET()
-
-    try:
-        http_server = HTTPServer(('0.0.0.0', HTTP_PORT), Handler)
-        server_thread = Thread(target=http_server.serve_forever, daemon=True)
-        server_thread.start()
-        logger.info(f"🌐 HTTP server STARTED successfully on 0.0.0.0:{HTTP_PORT}")
-        logger.info(f"📂 Serving directory: {OUTPUT_DIR}")
-
-        # List files in output directory
-        try:
-            files = list(OUTPUT_DIR.iterdir())
-            logger.info(f"📁 Files in {OUTPUT_DIR}: {[f.name for f in files]}")
-        except Exception as e:
-            logger.warning(f"Could not list files: {e}")
-
+        return video_base64
     except Exception as e:
-        logger.error(f"❌ Failed to start HTTP server: {e}", exc_info=True)
+        logger.error(f"Failed to encode video: {e}")
+        raise
 
 
 def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, str]:
@@ -227,21 +188,22 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
         # Cleanup input
         image_path.unlink(missing_ok=True)
 
-        # Verify output file exists and get size
+        # Verify output file exists
         if not output_path.exists():
             raise Exception(f"Output file not found: {output_path}")
 
-        file_size_mb = output_path.stat().st_size / (1024 * 1024)
-        logger.info(f"✅ Video file created: {output_filename} ({file_size_mb:.2f} MB)")
+        # Encode to base64
+        video_base64 = encode_video_to_base64(output_path)
 
-        # Return URL for VPS to download
-        base_url = get_worker_public_url()
-        video_url = f"{base_url}/{output_filename}"
+        # Cleanup output file after encoding
+        output_path.unlink(missing_ok=True)
 
-        logger.info(f"📤 Video ready for download: {image_id} -> {video_url}")
-        logger.info(f"📂 File location: {output_path}")
-
-        return {'id': image_id, 'video_url': video_url}
+        logger.info(f"✅ Image to video completed: {image_id}")
+        return {
+            'id': image_id,
+            'video_base64': video_base64,
+            'filename': output_filename
+        }
 
     except Exception as e:
         logger.error(f"Image to video failed for {image_id}: {e}")
@@ -303,8 +265,8 @@ def images_to_videos(images: List[Dict]) -> List[Dict[str, str]]:
     return results
 
 
-def add_audio(url_video: str, url_audio: str) -> str:
-    """Add audio to video"""
+def add_audio(url_video: str, url_audio: str) -> Dict[str, str]:
+    """Add audio to video and return base64"""
     job_id = str(uuid.uuid4())
     video_path = WORK_DIR / f"{job_id}_video.mp4"
     audio_path = WORK_DIR / f"{job_id}_audio.mp3"
@@ -332,13 +294,19 @@ def add_audio(url_video: str, url_audio: str) -> str:
             str(output_path)
         ])
 
-        # Cleanup inputs
+        # Encode to base64
+        video_base64 = encode_video_to_base64(output_path)
+
+        # Cleanup
         video_path.unlink(missing_ok=True)
         audio_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
 
-        # Return URL for VPS to download
-        base_url = get_worker_public_url()
-        return f"{base_url}/{output_filename}"
+        logger.info(f"✅ Add audio completed: {job_id}")
+        return {
+            'video_base64': video_base64,
+            'filename': output_filename
+        }
 
     except Exception as e:
         logger.error(f"Add audio failed: {e}")
@@ -370,10 +338,11 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             if not url_video or not url_srt:
                 return {"error": "Missing url_video or url_srt"}
 
-            video_url = add_caption(url_video, url_srt)
+            result = add_caption(url_video, url_srt)
             return {
                 "success": True,
-                "video_url": video_url,
+                "video_base64": result['video_base64'],
+                "filename": result['filename'],
                 "message": "Caption added successfully"
             }
 
@@ -390,13 +359,13 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
 
             videos = images_to_videos(images)
 
-            # Return URLs for VPS to download
+            # Return base64 data for VPS to decode and save
             return {
                 "success": True,
-                "videos": [{"id": v['id'], "video_url": v['video_url']} for v in videos],
+                "videos": videos,  # Already contains id, video_base64, filename
                 "total": len(images),
                 "processed": len(videos),
-                "message": "Images converted to videos successfully (URLs ready for download)"
+                "message": "Images converted to videos successfully"
             }
 
         elif operation == "addaudio":
@@ -406,10 +375,11 @@ def handler(job: Dict[str, Any]) -> Dict[str, Any]:
             if not url_video or not url_audio:
                 return {"error": "Missing url_video or url_audio"}
 
-            video_url = add_audio(url_video, url_audio)
+            result = add_audio(url_video, url_audio)
             return {
                 "success": True,
-                "video_url": video_url,
+                "video_base64": result['video_base64'],
+                "filename": result['filename'],
                 "message": "Audio added successfully"
             }
 
@@ -427,11 +397,6 @@ if __name__ == "__main__":
     logger.info(f"⚙️ WORK_DIR: {WORK_DIR}")
     logger.info(f"⚙️ OUTPUT_DIR: {OUTPUT_DIR}")
     logger.info(f"⚙️ BATCH_SIZE: {BATCH_SIZE}")
-    logger.info(f"⚙️ HTTP_PORT: {HTTP_PORT}")
+    logger.info("📦 Mode: Base64 encoding for VPS download")
 
-    # Start HTTP server immediately to serve files
-    # Files will remain available during 5min idle timeout
-    start_http_server()
-
-    logger.info("🌐 Worker ready to serve files via HTTP during idle timeout")
     runpod.serverless.start({"handler": handler})

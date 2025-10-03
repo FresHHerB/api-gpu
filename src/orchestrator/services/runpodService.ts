@@ -95,18 +95,22 @@ export class RunPodService {
         durationSec: (durationMs / 1000).toFixed(2)
       });
 
-      // 3. Download videos from worker URLs and save locally
+      // 3. Decode base64 videos and save locally
       await ensureOutputDir();
 
-      // For img2vid batch, download all videos from worker URLs
+      // For img2vid batch, decode all videos from base64
       if (operation === 'img2vid' && result.output.videos) {
         const processedVideos = await Promise.all(
           result.output.videos.map(async (video: any) => {
             try {
-              const localUrl = await this.downloadVideoFromWorker(video.id, video.video_url);
-              logger.info('Video downloaded from worker', {
+              const localUrl = await this.decodeAndSaveVideo(
+                video.id,
+                video.video_base64,
+                video.filename
+              );
+
+              logger.info('Video decoded and saved', {
                 id: video.id,
-                workerUrl: video.video_url,
                 localUrl
               });
 
@@ -115,9 +119,8 @@ export class RunPodService {
                 video_url: localUrl
               };
             } catch (error) {
-              logger.error('Failed to download video from worker', {
+              logger.error('Failed to decode video', {
                 id: video.id,
-                workerUrl: video.video_url,
                 error: error instanceof Error ? error.message : 'Unknown error'
               });
               throw error;
@@ -146,9 +149,10 @@ export class RunPodService {
       }
 
       // For single video operations (caption, addaudio)
-      const localVideoUrl = await this.downloadVideoFromWorker(
+      const localVideoUrl = await this.decodeAndSaveVideo(
         job.id,
-        result.output.video_url
+        result.output.video_base64,
+        result.output.filename
       );
 
       return {
@@ -164,8 +168,7 @@ export class RunPodService {
         stats: {
           jobId: job.id,
           delayTime: result.delayTime,
-          executionTime: result.executionTime,
-          ...result.output.stats
+          executionTime: result.executionTime
         }
       };
 
@@ -378,37 +381,36 @@ export class RunPodService {
   }
 
   /**
-   * Download video from worker URL and save locally
+   * Decode base64 video and save locally
    */
-  private async downloadVideoFromWorker(id: string, workerUrl: string): Promise<string> {
+  private async decodeAndSaveVideo(id: string, videoBase64: string, filename?: string): Promise<string> {
     try {
-      logger.info('Downloading video from worker', { id, workerUrl });
+      logger.info('Decoding base64 video', { id });
 
-      const response = await axios.get(workerUrl, {
-        responseType: 'arraybuffer',
-        timeout: 120000 // 2 minutes timeout
-      });
+      // Decode base64 to buffer
+      const videoBuffer = Buffer.from(videoBase64, 'base64');
 
-      const filename = `${id}_${Date.now()}.mp4`;
-      const filepath = path.join(OUTPUT_DIR, filename);
+      // Generate filename
+      const outputFilename = filename || `${id}_${Date.now()}.mp4`;
+      const filepath = path.join(OUTPUT_DIR, outputFilename);
 
-      await fs.writeFile(filepath, response.data);
+      // Save to disk
+      await fs.writeFile(filepath, videoBuffer);
 
-      const fileSize = (response.data.length / 1024 / 1024).toFixed(2);
-      logger.info('Video downloaded and saved', {
+      const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
+      logger.info('Video decoded and saved', {
         id,
-        filename,
-        sizeInMB: fileSize
+        filename: outputFilename,
+        sizeInMB: fileSizeMB
       });
 
-      return `/output/${filename}`;
+      return `/output/${outputFilename}`;
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(
-          `Failed to download video from worker: ${error.response?.status || error.message}`
-        );
-      }
-      throw error;
+      logger.error('Failed to decode and save video', {
+        id,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw new Error(`Failed to decode base64 video: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

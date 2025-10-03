@@ -40,10 +40,6 @@ ENV PYTHONUNBUFFERED=1
 ENV WORK_DIR=/tmp/work
 ENV OUTPUT_DIR=/tmp/output
 ENV BATCH_SIZE=3
-ENV HTTP_PORT=8000
-
-# Expose HTTP port for serving videos
-EXPOSE 8000
 
 # RunPod Serverless entry point
 CMD ["python", "-u", "rp_handler.py"]
