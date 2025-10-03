@@ -3,16 +3,16 @@
 ## 🚀 Current Setup (2025-01-03)
 
 ### Endpoint Details
-- **Endpoint ID**: `ntuho7h2y5ahzs`
+- **Endpoint ID**: `gsosg2ggw7sn22`
 - **Name**: `api-gpu-worker`
-- **API URL**: `https://api.runpod.ai/v2/ntuho7h2y5ahzs`
+- **API URL**: `https://api.runpod.ai/v2/gsosg2ggw7sn22`
 
 ### Template Details
-- **Template ID**: `c1f3mgt3rl`
-- **Name**: `api-gpu-worker-v1`
+- **Template ID**: `t7pnywsj4q`
+- **Name**: `api-gpu-worker-v2`
 - **Docker Image**: `oreiasccp/api-gpu-worker:latest`
 - **Docker Args**: `python -u rp_handler.py`
-- **Container Disk**: 10GB
+- **Container Disk**: 15GB
 - **Serverless**: Yes
 - **HTTP Port**: 8000
 
@@ -21,7 +21,7 @@
 - **Workers Max**: 3
 - **GPUs**: AMPERE_16, AMPERE_24, NVIDIA RTX A4000
 - **Scaler Type**: QUEUE_DELAY
-- **Scaler Value**: 3 seconds
+- **Scaler Value**: 4 seconds
 
 ### Environment Variables
 ```bash
@@ -34,6 +34,12 @@ HTTP_PORT=8000
 ---
 
 ## 📋 Supported Operations
+
+### Batch Processing
+- **Batch Size**: 3 images per batch
+- **Processing Mode**: Sequential batches (not parallel-all)
+- Example: 15 images = 5 sequential batches [1-3], [4-6], [7-9], [10-12], [13-15]
+- Each batch completes fully before next batch starts
 
 ### 1. Caption (add_caption)
 Adds subtitles to video using FFmpeg with GPU NVENC encoding.
@@ -101,27 +107,30 @@ Adds audio to video with automatic duration synchronization.
 
 ### Test Job (2025-01-03)
 ```bash
-curl -X POST "https://api.runpod.ai/v2/ntuho7h2y5ahzs/run" \
+curl -X POST "https://api.runpod.ai/v2/gsosg2ggw7sn22/run" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "input": {
       "operation": "img2vid",
       "frame_rate": 30,
-      "images": [{
-        "id": "test-corrected",
-        "image_url": "https://picsum.photos/1920/1080",
-        "duracao": 2.0
-      }]
+      "images": [
+        {"id": "test1", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "test2", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "test3", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "test4", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0},
+        {"id": "test5", "image_url": "https://picsum.photos/1920/1080", "duracao": 2.0}
+      ]
     }
   }'
 ```
 
 **Result:**
 - ✅ Status: COMPLETED
-- ⏱️ Delay Time: 6.05s (cold start)
-- ⚡ Execution Time: 1.76s
-- 📹 Output: `https://6nvhqj8mhus84i-8000.proxy.runpod.net/test-corrected_video.mp4`
+- ⏱️ Delay Time: 47.4s (cold start)
+- ⚡ Execution Time: 5.33s
+- 📦 Batches: 2 (batch 1: 3 images, batch 2: 2 images)
+- 📹 Output: 5 videos successfully downloaded from worker
 
 ---
 
@@ -149,8 +158,8 @@ curl -X POST "https://api.runpod.io/graphql" \
   -d '{
     "query": "mutation {
       updateEndpointTemplate(input: {
-        endpointId: \"ntuho7h2y5ahzs\",
-        templateId: \"c1f3mgt3rl\"
+        endpointId: \"gsosg2ggw7sn22\",
+        templateId: \"t7pnywsj4q\"
       }) {
         id name templateId
       }
@@ -164,13 +173,13 @@ curl -X POST "https://api.runpod.io/graphql" \
 
 ### Check Endpoint Health
 ```bash
-curl "https://api.runpod.ai/v2/ntuho7h2y5ahzs/health" \
+curl "https://api.runpod.ai/v2/gsosg2ggw7sn22/health" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
 ### Check Job Status
 ```bash
-curl "https://api.runpod.ai/v2/ntuho7h2y5ahzs/status/{job_id}" \
+curl "https://api.runpod.ai/v2/gsosg2ggw7sn22/status/{job_id}" \
   -H "Authorization: Bearer $RUNPOD_API_KEY"
 ```
 
@@ -215,7 +224,7 @@ curl "https://api.runpod.ai/v2/ntuho7h2y5ahzs/status/{job_id}" \
 Add to `.env`:
 ```bash
 RUNPOD_API_KEY=your_runpod_api_key_here
-RUNPOD_ENDPOINT_ID=ntuho7h2y5ahzs
+RUNPOD_ENDPOINT_ID=gsosg2ggw7sn22
 RUNPOD_IDLE_TIMEOUT=300
 RUNPOD_MAX_TIMEOUT=600
 ```
