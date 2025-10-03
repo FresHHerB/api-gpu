@@ -4,6 +4,7 @@
 
 import express from 'express';
 import path from 'path';
+import { mkdir } from 'fs/promises';
 import cors from 'cors';
 import helmet from 'helmet';
 import compression from 'compression';
@@ -21,6 +22,27 @@ import { startCleanupScheduler } from './utils/cleanup';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
+
+// ============================================
+// Ensure output directory exists
+// ============================================
+
+const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
+
+async function ensureOutputDirectory() {
+  try {
+    await mkdir(OUTPUT_DIR, { recursive: true });
+    logger.info('📂 Output directory ready', { path: OUTPUT_DIR });
+  } catch (error) {
+    logger.error('Failed to create output directory', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      path: OUTPUT_DIR
+    });
+  }
+}
+
+// Create output directory before starting server
+await ensureOutputDirectory();
 
 // ============================================
 // Middlewares
