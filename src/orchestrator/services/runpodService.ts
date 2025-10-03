@@ -95,22 +95,35 @@ export class RunPodService {
         durationSec: (durationMs / 1000).toFixed(2)
       });
 
-      // 3. Decode base64 videos and save locally
+      // 3. Download videos from worker URLs and save locally
       await ensureOutputDir();
 
-      // For img2vid batch, all videos are uploaded to VPS directly
+      // For img2vid batch, download all videos from worker URLs
       if (operation === 'img2vid' && result.output.videos) {
-        const processedVideos = result.output.videos.map((video: any) => {
-          logger.info('Video uploaded to VPS by worker', {
-            id: video.id,
-            video_url: video.video_url
-          });
+        const processedVideos = await Promise.all(
+          result.output.videos.map(async (video: any) => {
+            try {
+              const localUrl = await this.downloadVideoFromWorker(video.id, video.video_url);
+              logger.info('Video downloaded from worker', {
+                id: video.id,
+                workerUrl: video.video_url,
+                localUrl
+              });
 
-          return {
-            id: video.id,
-            video_url: video.video_url
-          };
-        });
+              return {
+                id: video.id,
+                video_url: localUrl
+              };
+            } catch (error) {
+              logger.error('Failed to download video from worker', {
+                id: video.id,
+                workerUrl: video.video_url,
+                error: error instanceof Error ? error.message : 'Unknown error'
+              });
+              throw error;
+            }
+          })
+        );
 
         return {
           code: 200,
@@ -133,10 +146,15 @@ export class RunPodService {
       }
 
       // For single video operations (caption, addaudio)
+      const localVideoUrl = await this.downloadVideoFromWorker(
+        job.id,
+        result.output.video_url
+      );
+
       return {
         code: 200,
         message: `Video ${operation} completed successfully`,
-        video_url: result.output.video_url,
+        video_url: localVideoUrl,
         execution: {
           startTime: new Date(startTime).toISOString(),
           endTime: new Date(endTime).toISOString(),
@@ -251,6 +269,10 @@ export class RunPodService {
             delayTime: job.delayTime ? `${(job.delayTime / 1000).toFixed(1)}s` : undefined,
             executionTime: job.executionTime ? `${(job.executionTime / 1000).toFixed(1)}s` : undefined
           });
+
+          // IMPORTANT: Download videos immediately while worker is still alive
+          // RunPod serverless workers are destroyed shortly after job completion
+          logger.info('⏬ Downloading videos immediately before worker shutdown');
           return job;
         }
 
@@ -353,6 +375,41 @@ export class RunPodService {
    */
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Download video from worker URL and save locally
+   */
+  private async downloadVideoFromWorker(id: string, workerUrl: string): Promise<string> {
+    try {
+      logger.info('Downloading video from worker', { id, workerUrl });
+
+      const response = await axios.get(workerUrl, {
+        responseType: 'arraybuffer',
+        timeout: 120000 // 2 minutes timeout
+      });
+
+      const filename = `${id}_${Date.now()}.mp4`;
+      const filepath = path.join(OUTPUT_DIR, filename);
+
+      await fs.writeFile(filepath, response.data);
+
+      const fileSize = (response.data.length / 1024 / 1024).toFixed(2);
+      logger.info('Video downloaded and saved', {
+        id,
+        filename,
+        sizeInMB: fileSize
+      });
+
+      return `/output/${filename}`;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        throw new Error(
+          `Failed to download video from worker: ${error.response?.status || error.message}`
+        );
+      }
+      throw error;
+    }
   }
 
   /**
