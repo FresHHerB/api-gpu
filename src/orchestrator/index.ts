@@ -117,6 +117,18 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   startCleanupScheduler();
 });
 
+// Set server timeout to 15 minutes (900000ms) to handle long video processing
+// This must be higher than RunPod job timeout
+server.timeout = 900000; // 15 min
+server.keepAliveTimeout = 910000; // Slightly higher than timeout
+server.headersTimeout = 920000; // Higher than keepAliveTimeout
+
+logger.info('⏱️ Server timeouts configured', {
+  timeout: '15 minutes',
+  keepAlive: '15.17 minutes',
+  headers: '15.33 minutes'
+});
+
 // Graceful shutdown
 const gracefulShutdown = (signal: string) => {
   logger.info(`📴 Shutdown initiated - Signal: ${signal}`);

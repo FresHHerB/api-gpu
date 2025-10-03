@@ -51,7 +51,7 @@ export class RunPodService {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      timeout: this.config.maxTimeout! * 1000 // Convert to ms
+      timeout: 0 // No timeout - let Express server handle it
     });
 
     logger.info('🚀 RunPodService initialized', {
@@ -226,11 +226,11 @@ export class RunPodService {
    */
   private async pollJobStatus(
     jobId: string,
-    maxAttempts: number = 300 // 10min max (2s * 300 = 600s)
+    maxAttempts: number = 180 // 12min max (4s avg * 180 = 720s)
   ): Promise<RunPodJobResponse> {
     let attempt = 0;
-    let delay = 2000; // Start with 2s
-    const maxDelay = 5000; // Max 5s between polls
+    let delay = 3000; // Start with 3s
+    const maxDelay = 8000; // Max 8s between polls
     let lastStatus = '';
     const startTime = Date.now();
 
