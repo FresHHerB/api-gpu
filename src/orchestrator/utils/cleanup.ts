@@ -7,7 +7,7 @@ import path from 'path';
 import { logger } from '../../shared/utils/logger';
 
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
-const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Delete files older than MAX_AGE_MS
@@ -56,5 +56,5 @@ export function startCleanupScheduler(): void {
     cleanupOldFiles();
   }, 15 * 60 * 1000);
 
-  logger.info('🧹 Cleanup scheduler started (every 15min, TTL 1h)');
+  logger.info('🧹 Cleanup scheduler started (every 15min, TTL 24h)');
 }

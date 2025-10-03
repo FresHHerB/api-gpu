@@ -94,9 +94,6 @@ def add_caption(url_video: str, url_srt: str) -> str:
     output_path = OUTPUT_DIR / output_filename
 
     try:
-        # Start HTTP server
-        start_http_server()
-
         # Download files
         download_file(url_video, video_path)
         download_file(url_srt, srt_path)
@@ -155,6 +152,7 @@ def start_http_server():
     global http_server, server_thread
 
     if http_server is not None:
+        logger.info("HTTP server already running")
         return  # Already running
 
     class Handler(SimpleHTTPRequestHandler):
@@ -162,15 +160,28 @@ def start_http_server():
             super().__init__(*args, directory=str(OUTPUT_DIR), **kwargs)
 
         def log_message(self, format, *args):
-            logger.info(f"HTTP: {format % args}")
+            logger.info(f"HTTP REQUEST: {format % args}")
+
+        def do_GET(self):
+            logger.info(f"GET request for: {self.path}")
+            super().do_GET()
 
     try:
         http_server = HTTPServer(('0.0.0.0', HTTP_PORT), Handler)
         server_thread = Thread(target=http_server.serve_forever, daemon=True)
         server_thread.start()
-        logger.info(f"🌐 HTTP server started on port {HTTP_PORT}")
+        logger.info(f"🌐 HTTP server STARTED successfully on 0.0.0.0:{HTTP_PORT}")
+        logger.info(f"📂 Serving directory: {OUTPUT_DIR}")
+
+        # List files in output directory
+        try:
+            files = list(OUTPUT_DIR.iterdir())
+            logger.info(f"📁 Files in {OUTPUT_DIR}: {[f.name for f in files]}")
+        except Exception as e:
+            logger.warning(f"Could not list files: {e}")
+
     except Exception as e:
-        logger.error(f"Failed to start HTTP server: {e}")
+        logger.error(f"❌ Failed to start HTTP server: {e}", exc_info=True)
 
 
 def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, str]:
@@ -216,11 +227,20 @@ def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, s
         # Cleanup input
         image_path.unlink(missing_ok=True)
 
+        # Verify output file exists and get size
+        if not output_path.exists():
+            raise Exception(f"Output file not found: {output_path}")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Video file created: {output_filename} ({file_size_mb:.2f} MB)")
+
         # Return URL for VPS to download
         base_url = get_worker_public_url()
         video_url = f"{base_url}/{output_filename}"
 
-        logger.info(f"✅ Video ready for download: {image_id} -> {video_url}")
+        logger.info(f"📤 Video ready for download: {image_id} -> {video_url}")
+        logger.info(f"📂 File location: {output_path}")
+
         return {'id': image_id, 'video_url': video_url}
 
     except Exception as e:
@@ -235,9 +255,6 @@ def images_to_videos(images: List[Dict]) -> List[Dict[str, str]]:
     """Convert multiple images to videos in parallel batches"""
     batch_job_id = str(uuid.uuid4())
     num_images = len(images)
-
-    # Start HTTP server for serving files
-    start_http_server()
 
     logger.info(f"🌐 Starting batch img2vid job {batch_job_id}: {num_images} images (VPS will download)")
 
@@ -295,9 +312,6 @@ def add_audio(url_video: str, url_audio: str) -> str:
     output_path = OUTPUT_DIR / output_filename
 
     try:
-        # Start HTTP server
-        start_http_server()
-
         # Download files
         download_file(url_video, video_path)
         download_file(url_audio, audio_path)
@@ -415,4 +429,9 @@ if __name__ == "__main__":
     logger.info(f"⚙️ BATCH_SIZE: {BATCH_SIZE}")
     logger.info(f"⚙️ HTTP_PORT: {HTTP_PORT}")
 
+    # Start HTTP server immediately to serve files
+    # Files will remain available during 5min idle timeout
+    start_http_server()
+
+    logger.info("🌐 Worker ready to serve files via HTTP during idle timeout")
     runpod.serverless.start({"handler": handler})
