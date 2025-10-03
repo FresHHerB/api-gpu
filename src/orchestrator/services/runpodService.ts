@@ -13,7 +13,7 @@ import {
   VideoResponse
 } from '../../shared/types';
 
-// Output directory for decoded videos
+// Output directory for downloaded videos
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
 
 // Ensure output directory exists
@@ -95,21 +95,20 @@ export class RunPodService {
         durationSec: (durationMs / 1000).toFixed(2)
       });
 
-      // 3. Decode base64 videos and save locally
+      // 3. Download videos from worker HTTP server
       await ensureOutputDir();
 
-      // For img2vid batch, decode all videos from base64
+      // For img2vid batch, download all videos
       if (operation === 'img2vid' && result.output.videos) {
         const processedVideos = await Promise.all(
           result.output.videos.map(async (video: any) => {
             try {
-              const localUrl = await this.decodeAndSaveVideo(
-                video.id,
-                video.video_base64,
+              const localUrl = await this.downloadVideoFromWorker(
+                video.video_url,
                 video.filename
               );
 
-              logger.info('Video decoded and saved', {
+              logger.info('Video downloaded from worker', {
                 id: video.id,
                 localUrl
               });
@@ -119,7 +118,7 @@ export class RunPodService {
                 video_url: localUrl
               };
             } catch (error) {
-              logger.error('Failed to decode video', {
+              logger.error('Failed to download video', {
                 id: video.id,
                 error: error instanceof Error ? error.message : 'Unknown error'
               });
@@ -149,9 +148,8 @@ export class RunPodService {
       }
 
       // For single video operations (caption, addaudio)
-      const localVideoUrl = await this.decodeAndSaveVideo(
-        job.id,
-        result.output.video_base64,
+      const localVideoUrl = await this.downloadVideoFromWorker(
+        result.output.video_url,
         result.output.filename
       );
 
@@ -381,36 +379,38 @@ export class RunPodService {
   }
 
   /**
-   * Decode base64 video and save locally
+   * Download video from worker HTTP server and save locally
    */
-  private async decodeAndSaveVideo(id: string, videoBase64: string, filename?: string): Promise<string> {
+  private async downloadVideoFromWorker(videoUrl: string, filename: string): Promise<string> {
     try {
-      logger.info('Decoding base64 video', { id });
+      logger.info('Downloading video from worker', { videoUrl, filename });
 
-      // Decode base64 to buffer
-      const videoBuffer = Buffer.from(videoBase64, 'base64');
+      // Download video from worker HTTP server
+      const response = await axios.get(videoUrl, {
+        responseType: 'arraybuffer',
+        timeout: 120000 // 2 min timeout for download
+      });
 
-      // Generate filename
-      const outputFilename = filename || `${id}_${Date.now()}.mp4`;
-      const filepath = path.join(OUTPUT_DIR, outputFilename);
+      const videoBuffer = Buffer.from(response.data);
 
-      // Save to disk
+      // Save to local disk
+      const filepath = path.join(OUTPUT_DIR, filename);
       await fs.writeFile(filepath, videoBuffer);
 
       const fileSizeMB = (videoBuffer.length / 1024 / 1024).toFixed(2);
-      logger.info('Video decoded and saved', {
-        id,
-        filename: outputFilename,
+      logger.info('Video downloaded and saved', {
+        filename,
         sizeInMB: fileSizeMB
       });
 
-      return `/output/${outputFilename}`;
+      return `/output/${filename}`;
     } catch (error) {
-      logger.error('Failed to decode and save video', {
-        id,
+      logger.error('Failed to download video from worker', {
+        videoUrl,
+        filename,
         error: error instanceof Error ? error.message : 'Unknown error'
       });
-      throw new Error(`Failed to decode base64 video: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to download video: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

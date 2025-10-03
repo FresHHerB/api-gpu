@@ -1,7 +1,7 @@
 """
 RunPod Serverless Handler for GPU Video Processing
 Handles: caption, img2vid (batch), addaudio operations
-Returns video data as base64 for VPS download
+Returns video URLs via HTTP server running on worker
 """
 
 import runpod
@@ -11,10 +11,11 @@ import logging
 import subprocess
 import requests
 import uuid
-import base64
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import threading
 
 # Setup logging
 logging.basicConfig(
@@ -27,10 +28,29 @@ logger = logging.getLogger(__name__)
 WORK_DIR = Path(os.getenv('WORK_DIR', '/tmp/work'))
 OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '3'))
+HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# HTTP Server for serving videos
+class VideoHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(OUTPUT_DIR), **kwargs)
+
+    def log_message(self, format, *args):
+        logger.info(f"HTTP: {format % args}")
+
+def start_http_server():
+    """Start HTTP server to serve videos"""
+    server = HTTPServer(('0.0.0.0', HTTP_PORT), VideoHandler)
+    logger.info(f"🌐 HTTP server started on port {HTTP_PORT}, serving {OUTPUT_DIR}")
+    server.serve_forever()
+
+# Start HTTP server in background thread
+http_thread = threading.Thread(target=start_http_server, daemon=True)
+http_thread.start()
 
 
 def download_file(url: str, output_path: Path) -> None:
@@ -49,354 +69,291 @@ def download_file(url: str, output_path: Path) -> None:
         logger.info(f"Download completed: {output_path} ({file_size} bytes)")
 
         if file_size == 0:
-            raise Exception(f"Downloaded file is empty: {url}")
+            raise ValueError(f"Downloaded file is empty: {url}")
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         logger.error(f"Download failed for {url}: {e}")
-        raise Exception(f"Failed to download {url}: {str(e)}")
+        raise
 
 
-def run_ffmpeg(args: List[str]) -> None:
-    """Run FFmpeg command"""
-    cmd = ['ffmpeg', '-y'] + args
-    logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+def add_caption(url_video: str, url_srt: str) -> Dict[str, Any]:
+    """Add caption to video using FFmpeg with GPU acceleration"""
+    video_id = str(uuid.uuid4())
+    logger.info(f"Starting caption job: {video_id}")
 
-    result = subprocess.run(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-
-    if result.returncode != 0:
-        logger.error(f"FFmpeg error: {result.stderr}")
-        raise Exception(f"FFmpeg failed: {result.stderr}")
-
-    logger.info("FFmpeg completed successfully")
-
-
-def add_caption(url_video: str, url_srt: str) -> Dict[str, str]:
-    """Add captions to video and return base64"""
-    job_id = str(uuid.uuid4())
-    video_path = WORK_DIR / f"{job_id}_input.mp4"
-    srt_path = WORK_DIR / f"{job_id}_sub.srt"
-    output_filename = f"{job_id}_captioned.mp4"
+    video_path = WORK_DIR / f"{video_id}_input.mp4"
+    srt_path = WORK_DIR / f"{video_id}_caption.srt"
+    output_filename = f"{video_id}_captioned.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     try:
-        # Download files
+        # Download video and SRT
         download_file(url_video, video_path)
         download_file(url_srt, srt_path)
 
-        # Add captions with GPU acceleration
-        run_ffmpeg([
+        # FFmpeg command with GPU NVENC encoding
+        cmd = [
+            'ffmpeg', '-y',
             '-hwaccel', 'cuda',
-            '-hwaccel_output_format', 'cuda',
             '-i', str(video_path),
-            '-vf', f"subtitles='{srt_path}'",
+            '-vf', f"subtitles={srt_path}",
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-cq', '23',
             '-b:v', '5M',
             '-c:a', 'copy',
             str(output_path)
-        ])
+        ]
 
-        # Encode to base64
-        video_base64 = encode_video_to_base64(output_path)
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-        # Cleanup
-        video_path.unlink(missing_ok=True)
-        srt_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
 
-        logger.info(f"✅ Caption completed: {job_id}")
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Caption added: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Return HTTP URL to access the video
+        video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+
         return {
-            'video_base64': video_base64,
+            'video_url': video_url,
             'filename': output_filename
         }
 
-    except Exception as e:
-        logger.error(f"Caption failed: {e}")
-        # Cleanup on error
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input files
         video_path.unlink(missing_ok=True)
         srt_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
-        raise
 
 
-def encode_video_to_base64(video_path: Path) -> str:
-    """Encode video file to base64 string"""
-    try:
-        with open(video_path, 'rb') as f:
-            video_bytes = f.read()
-            video_base64 = base64.b64encode(video_bytes).decode('utf-8')
+def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, Any]:
+    """Convert image to video using FFmpeg with GPU acceleration"""
+    logger.info(f"Converting image to video: {image_id}, duration: {duracao}s")
 
-        file_size_mb = len(video_bytes) / (1024 * 1024)
-        base64_size_mb = len(video_base64) / (1024 * 1024)
-
-        logger.info(f"📦 Encoded video: {video_path.name}")
-        logger.info(f"   Original: {file_size_mb:.2f} MB")
-        logger.info(f"   Base64: {base64_size_mb:.2f} MB ({(base64_size_mb/file_size_mb):.1f}x)")
-
-        return video_base64
-    except Exception as e:
-        logger.error(f"Failed to encode video: {e}")
-        raise
-
-
-def image_to_video(image_id: str, image_url: str, duracao: float) -> Dict[str, str]:
-    """Convert single image to video with Ken Burns effect"""
-    job_id = str(uuid.uuid4())
-    image_path = WORK_DIR / f"{job_id}_{image_id}_input.jpg"
-    output_filename = f"{job_id}_{image_id}_video.mp4"
+    image_path = WORK_DIR / f"{image_id}_image.jpg"
+    output_filename = f"{image_id}_video.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     try:
-        logger.info(f"Processing image {image_id}: url={image_url}, duration={duracao}s")
-
         # Download image
         download_file(image_url, image_path)
 
-        # Verify image was downloaded
-        if not image_path.exists():
-            raise Exception(f"Image file not found after download: {image_path}")
-
-        # Calculate zoom parameters (24fps fixed)
-        total_frames = int(duracao * 24)
-        zoom_factor = 1.324  # 32.4% zoom
-
-        # Ken Burns effect with GPU acceleration
-        run_ffmpeg([
+        # FFmpeg command with GPU NVENC encoding
+        cmd = [
+            'ffmpeg', '-y',
             '-loop', '1',
-            '-framerate', '24',
             '-i', str(image_path),
-            '-vf', (
-                f"scale=6720:3840,zoompan=z='min(zoom+0.0015,{zoom_factor})':"
-                f"x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:"
-                f"s=1920x1080:fps=24"
-            ),
+            '-t', str(duracao),
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-cq', '23',
-            '-b:v', '8M',
+            '-b:v', '5M',
             '-pix_fmt', 'yuv420p',
-            '-t', str(duracao),
+            '-r', '30',
             str(output_path)
-        ])
+        ]
 
-        # Cleanup input
-        image_path.unlink(missing_ok=True)
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-        # Verify output file exists
-        if not output_path.exists():
-            raise Exception(f"Output file not found: {output_path}")
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
 
-        # Encode to base64
-        video_base64 = encode_video_to_base64(output_path)
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Image to video completed: {output_filename} ({file_size_mb:.2f} MB)")
 
-        # Cleanup output file after encoding
-        output_path.unlink(missing_ok=True)
+        # Return HTTP URL to access the video
+        video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
 
-        logger.info(f"✅ Image to video completed: {image_id}")
         return {
             'id': image_id,
-            'video_base64': video_base64,
+            'video_url': video_url,
             'filename': output_filename
         }
 
-    except Exception as e:
-        logger.error(f"Image to video failed for {image_id}: {e}")
-        # Cleanup on error
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input image
         image_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
-        raise
 
 
-def images_to_videos(images: List[Dict]) -> List[Dict[str, str]]:
-    """Convert multiple images to videos in parallel batches"""
-    batch_job_id = str(uuid.uuid4())
-    num_images = len(images)
-
-    logger.info(f"🌐 Starting batch img2vid job {batch_job_id}: {num_images} images (VPS will download)")
+def process_img2vid_batch(images: List[Dict]) -> Dict[str, Any]:
+    """Process multiple images to videos in parallel batches"""
+    total = len(images)
+    logger.info(f"📦 Processing {total} images with batch size {BATCH_SIZE}")
 
     results = []
-    errors = []
 
-    # Process in batches
-    for i in range(0, len(images), BATCH_SIZE):
-        batch = images[i:i + BATCH_SIZE]
-        batch_num = (i // BATCH_SIZE) + 1
-        total_batches = (len(images) + BATCH_SIZE - 1) // BATCH_SIZE
+    with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
+        futures = {
+            executor.submit(
+                image_to_video,
+                img['id'],
+                img['image_url'],
+                img['duracao']
+            ): img for img in images
+        }
 
-        logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} images)")
+        for future in as_completed(futures):
+            img = futures[future]
+            try:
+                result = future.result()
+                results.append(result)
+                logger.info(f"✅ Completed {len(results)}/{total}: {img['id']}")
+            except Exception as e:
+                logger.error(f"Failed to process {img['id']}: {e}")
+                raise
 
-        # Process batch in parallel
-        with ThreadPoolExecutor(max_workers=BATCH_SIZE) as executor:
-            future_to_image = {
-                executor.submit(
-                    image_to_video,
-                    img['id'],
-                    img['image_url'],
-                    img['duracao']
-                ): img for img in batch
-            }
+    logger.info(f"✅ All {total} images processed successfully")
 
-            for future in as_completed(future_to_image):
-                img = future_to_image[future]
-                try:
-                    result = future.result()
-                    results.append(result)
-                    logger.info(f"✅ Image {img['id']} processed successfully")
-                except Exception as e:
-                    error_msg = str(e)
-                    errors.append({'id': img['id'], 'error': error_msg})
-                    logger.error(f"❌ Image {img['id']} failed: {error_msg}")
-
-    if errors:
-        logger.warning(f"Batch completed with {len(errors)} errors: {errors}")
-
-    if len(results) == 0:
-        error_details = "; ".join([f"{e['id']}: {e['error']}" for e in errors])
-        raise Exception(f"All images failed to process: {error_details}")
-
-    logger.info(f"Batch job completed: {len(results)}/{len(images)} succeeded")
-
-    return results
+    return {
+        "message": "Images converted to videos successfully",
+        "total": total,
+        "processed": len(results),
+        "videos": results
+    }
 
 
-def add_audio(url_video: str, url_audio: str) -> Dict[str, str]:
-    """Add audio to video and return base64"""
-    job_id = str(uuid.uuid4())
-    video_path = WORK_DIR / f"{job_id}_video.mp4"
-    audio_path = WORK_DIR / f"{job_id}_audio.mp3"
-    output_filename = f"{job_id}_final.mp4"
+def add_audio(url_video: str, url_audio: str) -> Dict[str, Any]:
+    """Add audio to video using FFmpeg with GPU acceleration"""
+    video_id = str(uuid.uuid4())
+    logger.info(f"Starting audio job: {video_id}")
+
+    video_path = WORK_DIR / f"{video_id}_video.mp4"
+    audio_path = WORK_DIR / f"{video_id}_audio.mp3"
+    output_filename = f"{video_id}_with_audio.mp4"
     output_path = OUTPUT_DIR / output_filename
 
     try:
-        # Download files
+        # Download video and audio
         download_file(url_video, video_path)
         download_file(url_audio, audio_path)
 
-        # Merge audio with GPU acceleration
-        run_ffmpeg([
+        # FFmpeg command with GPU NVENC encoding
+        cmd = [
+            'ffmpeg', '-y',
             '-hwaccel', 'cuda',
-            '-hwaccel_output_format', 'cuda',
             '-i', str(video_path),
             '-i', str(audio_path),
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
-            '-cq', '23',
             '-b:v', '5M',
             '-c:a', 'aac',
             '-b:a', '192k',
             '-shortest',
             str(output_path)
-        ])
+        ]
 
-        # Encode to base64
-        video_base64 = encode_video_to_base64(output_path)
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-        # Cleanup
-        video_path.unlink(missing_ok=True)
-        audio_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
 
-        logger.info(f"✅ Add audio completed: {job_id}")
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Audio added: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Return HTTP URL to access the video
+        video_url = f"http://localhost:{HTTP_PORT}/{output_filename}"
+
         return {
-            'video_base64': video_base64,
+            'video_url': video_url,
             'filename': output_filename
         }
 
-    except Exception as e:
-        logger.error(f"Add audio failed: {e}")
-        # Cleanup on error
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input files
         video_path.unlink(missing_ok=True)
         audio_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
-        raise
 
 
-def handler(job: Dict[str, Any]) -> Dict[str, Any]:
+def handler(job: Dict) -> Dict[str, Any]:
     """
-    RunPod Serverless Handler
-    Expects job = {"input": {"operation": "...", ...}}
+    RunPod handler function
+    Receives job input and routes to appropriate operation
     """
-    job_input = job.get("input", {})
-    operation = job_input.get("operation")
+    job_input = job.get('input', {})
+    operation = job_input.get('operation')
 
-    if not operation:
-        return {"error": "Missing 'operation' in input"}
-
-    logger.info(f"🚀 Job received: {operation}")
+    logger.info(f"🚀 Job started: {operation}")
+    logger.info(f"📥 Input: {job_input}")
 
     try:
-        if operation == "caption":
-            url_video = job_input.get("url_video")
-            url_srt = job_input.get("url_srt")
+        if operation == 'caption':
+            url_video = job_input.get('url_video')
+            url_srt = job_input.get('url_srt')
 
             if not url_video or not url_srt:
-                return {"error": "Missing url_video or url_srt"}
+                raise ValueError("Missing required fields: url_video, url_srt")
 
             result = add_caption(url_video, url_srt)
             return {
                 "success": True,
-                "video_base64": result['video_base64'],
+                "video_url": result['video_url'],
                 "filename": result['filename'],
                 "message": "Caption added successfully"
             }
 
-        elif operation == "img2vid":
-            images = job_input.get("images")
+        elif operation == 'img2vid':
+            images = job_input.get('images', [])
 
-            if not images or not isinstance(images, list):
-                return {"error": "Missing or invalid 'images' array"}
+            if not images:
+                raise ValueError("Missing required field: images")
 
-            # Validate images
-            for img in images:
-                if not all(k in img for k in ['id', 'image_url', 'duracao']):
-                    return {"error": "Each image must have id, image_url, and duracao"}
-
-            videos = images_to_videos(images)
-
-            # Return base64 data for VPS to decode and save
+            result = process_img2vid_batch(images)
             return {
                 "success": True,
-                "videos": videos,  # Already contains id, video_base64, filename
-                "total": len(images),
-                "processed": len(videos),
-                "message": "Images converted to videos successfully"
+                **result
             }
 
-        elif operation == "addaudio":
-            url_video = job_input.get("url_video")
-            url_audio = job_input.get("url_audio")
+        elif operation == 'addaudio':
+            url_video = job_input.get('url_video')
+            url_audio = job_input.get('url_audio')
 
             if not url_video or not url_audio:
-                return {"error": "Missing url_video or url_audio"}
+                raise ValueError("Missing required fields: url_video, url_audio")
 
             result = add_audio(url_video, url_audio)
             return {
                 "success": True,
-                "video_base64": result['video_base64'],
+                "video_url": result['video_url'],
                 "filename": result['filename'],
                 "message": "Audio added successfully"
             }
 
         else:
-            return {"error": f"Unknown operation: {operation}"}
+            raise ValueError(f"Unknown operation: {operation}")
 
     except Exception as e:
-        logger.error(f"❌ Job failed: {e}", exc_info=True)
-        return {"error": str(e)}
+        logger.error(f"❌ Job failed: {e}")
+        raise
 
 
-# Start RunPod serverless worker
 if __name__ == "__main__":
-    logger.info("🏁 Starting RunPod Serverless Worker (Python)")
-    logger.info(f"⚙️ WORK_DIR: {WORK_DIR}")
-    logger.info(f"⚙️ OUTPUT_DIR: {OUTPUT_DIR}")
-    logger.info(f"⚙️ BATCH_SIZE: {BATCH_SIZE}")
-    logger.info("📦 Mode: Base64 encoding for VPS download")
+    logger.info("=" * 50)
+    logger.info("🎬 GPU Worker Started (HTTP Mode)")
+    logger.info("=" * 50)
+    logger.info(f"📂 Work dir: {WORK_DIR}")
+    logger.info(f"📂 Output dir: {OUTPUT_DIR}")
+    logger.info(f"🔢 Batch size: {BATCH_SIZE}")
+    logger.info(f"🌐 HTTP server: port {HTTP_PORT}")
+    logger.info("=" * 50)
 
+    # Validate FFmpeg
+    try:
+        result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True)
+        logger.info("✅ FFmpeg available")
+    except FileNotFoundError:
+        logger.error("❌ FFmpeg not found!")
+        sys.exit(1)
+
+    # Start RunPod handler
     runpod.serverless.start({"handler": handler})
