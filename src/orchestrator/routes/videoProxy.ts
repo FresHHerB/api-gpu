@@ -261,8 +261,250 @@ router.get('/runpod/config', authenticateApiKey, (_req: Request, res: Response) 
   });
 });
 
+// ============================================
+// Async Endpoints (Submit and return jobId immediately)
+// ============================================
+
 /**
- * GET /job/:jobId
+ * POST /video/caption/async
+ * Submit caption job and return immediately with jobId
+ */
+router.post('/video/caption/async', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data: CaptionRequest = req.body;
+
+    // Validate request
+    if (!data.url_video || !data.url_srt || !data.path || !data.output_filename) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'url_video, url_srt, path, and output_filename are required'
+      });
+      return;
+    }
+
+    logger.info('📹 Caption async request received', {
+      url_video: data.url_video,
+      url_srt: data.url_srt,
+      path: data.path,
+      output_filename: data.output_filename,
+      ip: req.ip
+    });
+
+    // Submit job (returns immediately)
+    const job = await runpodService.submitJob('caption', data);
+
+    logger.info('✅ Caption job submitted', { jobId: job.id, status: job.status });
+
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      statusUrl: `/video/job/${job.id}`,
+      resultUrl: `/video/job/${job.id}/result`,
+      message: 'Job submitted successfully. Use statusUrl to check progress.'
+    });
+
+  } catch (error) {
+    logger.error('❌ Caption async submit failed', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(500).json({
+      error: 'Submit failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * POST /video/img2vid/async
+ * Submit img2vid job and return immediately with jobId
+ */
+router.post('/video/img2vid/async', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data: Img2VidRequest = req.body;
+
+    // Validate request
+    if (!data.images || !Array.isArray(data.images) || data.images.length === 0) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'images array is required with at least one image'
+      });
+      return;
+    }
+
+    for (const img of data.images) {
+      if (!img.id || !img.image_url || !img.duracao) {
+        res.status(400).json({
+          error: 'Bad Request',
+          message: 'Each image must have id, image_url, and duracao'
+        });
+        return;
+      }
+    }
+
+    if (!data.path) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'path is required for S3 upload'
+      });
+      return;
+    }
+
+    logger.info('🖼️ Img2Vid async request received', {
+      imageCount: data.images.length,
+      images: data.images.map(i => ({ id: i.id, duracao: i.duracao })),
+      path: data.path,
+      ip: req.ip
+    });
+
+    // Submit job (returns immediately)
+    const job = await runpodService.submitJob('img2vid', data);
+
+    logger.info('✅ Img2Vid job submitted', { jobId: job.id, status: job.status });
+
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      statusUrl: `/video/job/${job.id}`,
+      resultUrl: `/video/job/${job.id}/result`,
+      message: 'Job submitted successfully. Use statusUrl to check progress.',
+      estimatedTime: '2-10 minutes depending on image count'
+    });
+
+  } catch (error) {
+    logger.error('❌ Img2Vid async submit failed', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(500).json({
+      error: 'Submit failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * POST /video/addaudio/async
+ * Submit addaudio job and return immediately with jobId
+ */
+router.post('/video/addaudio/async', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const data: AddAudioRequest = req.body;
+
+    // Validate request
+    if (!data.url_video || !data.url_audio || !data.path || !data.output_filename) {
+      res.status(400).json({
+        error: 'Bad Request',
+        message: 'url_video, url_audio, path, and output_filename are required'
+      });
+      return;
+    }
+
+    logger.info('🎵 AddAudio async request received', {
+      url_video: data.url_video,
+      url_audio: data.url_audio,
+      path: data.path,
+      output_filename: data.output_filename,
+      ip: req.ip
+    });
+
+    // Submit job (returns immediately)
+    const job = await runpodService.submitJob('addaudio', data);
+
+    logger.info('✅ AddAudio job submitted', { jobId: job.id, status: job.status });
+
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      statusUrl: `/video/job/${job.id}`,
+      resultUrl: `/video/job/${job.id}/result`,
+      message: 'Job submitted successfully. Use statusUrl to check progress.'
+    });
+
+  } catch (error) {
+    logger.error('❌ AddAudio async submit failed', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(500).json({
+      error: 'Submit failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ============================================
+// Job Status and Result Endpoints
+// ============================================
+
+/**
+ * GET /video/job/:jobId
+ * Check status of a specific job
+ */
+router.get('/video/job/:jobId', authenticateApiKey, async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const status = await runpodService.getJobStatus(jobId);
+
+    res.json(status);
+  } catch (error) {
+    logger.error('Failed to get job status', {
+      jobId: req.params.jobId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(404).json({
+      error: 'Job not found',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * GET /video/job/:jobId/result
+ * Get formatted result of completed job
+ */
+router.get('/video/job/:jobId/result', authenticateApiKey, async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const status = await runpodService.getJobStatus(jobId);
+
+    if (status.status !== 'COMPLETED') {
+      res.status(202).json({
+        jobId,
+        status: status.status,
+        message: status.status === 'IN_QUEUE' ? 'Job is in queue' :
+                 status.status === 'IN_PROGRESS' ? 'Job is in progress' :
+                 status.status === 'FAILED' ? 'Job failed' : 'Unknown status',
+        statusUrl: `/video/job/${jobId}`
+      });
+      return;
+    }
+
+    // Job completed - return formatted result
+    res.json({
+      jobId,
+      status: 'COMPLETED',
+      result: status.output,
+      delayTime: status.delayTime,
+      executionTime: status.executionTime
+    });
+
+  } catch (error) {
+    logger.error('Failed to get job result', {
+      jobId: req.params.jobId,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(404).json({
+      error: 'Job not found',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * GET /job/:jobId (legacy endpoint)
  * Check status of a specific job
  */
 router.get('/job/:jobId', authenticateApiKey, async (req: Request, res: Response) => {

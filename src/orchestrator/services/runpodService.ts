@@ -159,8 +159,9 @@ export class RunPodService {
 
   /**
    * Submit job to RunPod endpoint (async mode)
+   * Public method to allow async endpoints to submit without waiting
    */
-  private async submitJob(
+  async submitJob(
     operation: 'caption' | 'img2vid' | 'addaudio',
     data: any
   ): Promise<RunPodJobResponse> {

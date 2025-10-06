@@ -89,13 +89,29 @@ app.use('/', videoProxyRoutes);
 app.get('/', (_req, res) => {
   res.json({
     message: 'API GPU Orchestrator - RunPod Serverless',
-    version: '1.0.0',
+    version: '2.0.0',
+    features: {
+      sync: 'Synchronous endpoints (block until complete)',
+      async: 'Asynchronous endpoints (submit and poll)'
+    },
     endpoints: {
-      caption: 'POST /video/caption',
-      img2vid: 'POST /video/img2vid',
-      addaudio: 'POST /video/addaudio',
-      health: 'GET /health',
-      runpodHealth: 'GET /runpod/health'
+      sync: {
+        caption: 'POST /video/caption',
+        img2vid: 'POST /video/img2vid',
+        addaudio: 'POST /video/addaudio'
+      },
+      async: {
+        captionSubmit: 'POST /video/caption/async',
+        img2vidSubmit: 'POST /video/img2vid/async',
+        addaudioSubmit: 'POST /video/addaudio/async',
+        jobStatus: 'GET /video/job/:jobId',
+        jobResult: 'GET /video/job/:jobId/result',
+        jobCancel: 'POST /job/:jobId/cancel'
+      },
+      health: {
+        service: 'GET /health',
+        runpod: 'GET /runpod/health'
+      }
     },
     documentation: '/docs'
   });
