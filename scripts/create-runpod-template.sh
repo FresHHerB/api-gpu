@@ -12,7 +12,7 @@ RESPONSE=$(curl -s -X POST "https://api.runpod.io/graphql" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
   -d "{
-    \"query\": \"mutation { saveTemplate(input: { name: \\\"api-gpu-worker-v4-30min\\\", imageName: \\\"$IMAGE_NAME\\\", containerRegistryAuthId: \\\"$REGISTRY_AUTH_ID\\\", dockerArgs: \\\"python -u rp_handler.py\\\", containerDiskInGb: 10, volumeInGb: 0, isServerless: true, executionTimeout: 2400, env: [{key: \\\"WORK_DIR\\\", value: \\\"/tmp/work\\\"}, {key: \\\"OUTPUT_DIR\\\", value: \\\"/tmp/output\\\"}, {key: \\\"BATCH_SIZE\\\", value: \\\"3\\\"}] }) { id name imageName executionTimeout } }\"
+    \"query\": \"mutation { saveTemplate(input: { name: \\\"api-gpu-worker-v4-30min\\\", imageName: \\\"$IMAGE_NAME\\\", containerRegistryAuthId: \\\"$REGISTRY_AUTH_ID\\\", dockerArgs: \\\"python -u rp_handler.py\\\", containerDiskInGb: 10, volumeInGb: 0, isServerless: true, env: [{key: \\\"WORK_DIR\\\", value: \\\"/tmp/work\\\"}, {key: \\\"OUTPUT_DIR\\\", value: \\\"/tmp/output\\\"}, {key: \\\"BATCH_SIZE\\\", value: \\\"3\\\"}] }) { id name imageName } }\"
   }")
 
 echo "Resposta: $RESPONSE"

@@ -19,7 +19,7 @@ RESPONSE=$(curl -s -X POST "https://api.runpod.io/graphql" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
   -d "{
-    \"query\": \"mutation { saveEndpoint(input: { name: \\\"api-gpu-worker-30min\\\", templateId: \\\"$TEMPLATE_ID\\\", gpuIds: \\\"AMPERE_16,AMPERE_24\\\", idleTimeout: 300, scalerType: \\\"QUEUE_DELAY\\\", scalerValue: 3, workersMin: 0, workersMax: 3 }) { id name templateId gpuIds workersMin workersMax } }\"
+    \"query\": \"mutation { saveEndpoint(input: { name: \\\"api-gpu-worker-30min\\\", templateId: \\\"$TEMPLATE_ID\\\", gpuIds: \\\"AMPERE_16,AMPERE_24\\\", idleTimeout: 300, executionTimeoutMs: 2400000, scalerType: \\\"QUEUE_DELAY\\\", scalerValue: 3, workersMin: 0, workersMax: 3 }) { id name templateId gpuIds workersMin workersMax } }\"
   }")
 
 echo "Resposta: $RESPONSE"
