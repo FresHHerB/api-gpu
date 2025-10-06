@@ -28,7 +28,7 @@ export class RunPodService {
       endpointId: this.endpointId,
       apiKey,
       idleTimeout: parseInt(process.env.RUNPOD_IDLE_TIMEOUT || '300'), // 5min default
-      maxTimeout: parseInt(process.env.RUNPOD_MAX_TIMEOUT || '600') // 10min default
+      maxTimeout: parseInt(process.env.RUNPOD_EXECUTION_TIMEOUT || '2400') // 40min default
     };
 
     this.client = axios.create({
@@ -202,7 +202,7 @@ export class RunPodService {
    */
   private async pollJobStatus(
     jobId: string,
-    maxAttempts: number = 90 // ~12min max (optimized for multi-worker batches)
+    maxAttempts: number = parseInt(process.env.POLLING_MAX_ATTEMPTS || '240') // 32min max (240 × 8s)
   ): Promise<RunPodJobResponse> {
     let attempt = 0;
     let delay = 2000; // Start with 2s (more responsive)
@@ -212,6 +212,7 @@ export class RunPodService {
 
     logger.info('⏳ Polling RunPod job status', {
       jobId,
+      maxAttempts,
       maxWaitTime: `${(maxAttempts * maxDelay / 1000 / 60).toFixed(1)}min`
     });
 

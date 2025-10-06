@@ -154,16 +154,17 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   startCleanupScheduler();
 });
 
-// Set server timeout to 15 minutes (900000ms) to handle long video processing
-// Optimized for multi-worker batches that can take 10-12 minutes
-server.timeout = 900000; // 15 min
-server.keepAliveTimeout = 910000; // Slightly higher than timeout
-server.headersTimeout = 920000; // Higher than keepAliveTimeout
+// Set server timeout from .env (default: 35 minutes for 30min execution + margin)
+// Hierarchy: Polling (32min) < Express (35min) < RunPod (40min)
+const expressTimeout = parseInt(process.env.EXPRESS_TIMEOUT_MS || '2100000'); // 35 min default
+server.timeout = expressTimeout;
+server.keepAliveTimeout = expressTimeout + 10000; // +10s margin
+server.headersTimeout = expressTimeout + 20000; // +20s margin
 
 logger.info('⏱️ Server timeouts configured', {
-  timeout: '15 minutes',
-  keepAlive: '15.17 minutes',
-  headers: '10.33 minutes'
+  timeout: `${(expressTimeout / 1000 / 60).toFixed(1)} minutes`,
+  keepAlive: `${((expressTimeout + 10000) / 1000 / 60).toFixed(1)} minutes`,
+  headers: `${((expressTimeout + 20000) / 1000 / 60).toFixed(1)} minutes`
 });
 
 // Graceful shutdown
