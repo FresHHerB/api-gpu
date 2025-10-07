@@ -54,6 +54,30 @@ s3_client = boto3.client(
     config=boto3.session.Config(signature_version='s3v4')
 )
 
+# GPU Detection
+def check_gpu_available() -> bool:
+    """Check if NVIDIA GPU is available for CUDA/NVENC encoding"""
+    try:
+        # Try nvidia-smi
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=gpu_name', '--format=csv,noheader'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            gpu_name = result.stdout.strip().split('\n')[0]
+            logger.info(f"✅ GPU detected: {gpu_name}")
+            return True
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        logger.warning(f"⚠️ GPU detection failed: {e}")
+
+    logger.warning("⚠️ No GPU detected - will use CPU encoding")
+    return False
+
+# Global GPU availability flag (checked once at startup)
+GPU_AVAILABLE = check_gpu_available()
+
 # HTTP Server for serving videos (caption/addaudio only)
 class VideoHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -208,25 +232,42 @@ def add_caption(
             logger.info("📝 Using default subtitle style")
             subtitles_filter = f"subtitles=filename='{normalized_srt}'"
 
-        # FFmpeg command with GPU NVENC encoding - VBR mode
+        # FFmpeg command - GPU or CPU encoding based on availability
         # Note: subtitles filter is incompatible with hwaccel_output_format cuda
-        cmd = [
-            'ffmpeg', '-y',
-            '-hwaccel', 'cuda',
-            '-i', str(video_path),
-            '-vf', subtitles_filter,
-            '-c:v', 'h264_nvenc',
-            '-preset', 'p4',
-            '-tune', 'hq',
-            '-rc:v', 'vbr',
-            '-cq:v', '23',
-            '-b:v', '0',
-            '-maxrate', '10M',
-            '-bufsize', '20M',
-            '-c:a', 'copy',
-            '-movflags', '+faststart',
-            str(output_path)
-        ]
+        if GPU_AVAILABLE:
+            logger.info("🎮 Using GPU encoding (NVENC)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-hwaccel', 'cuda',
+                '-i', str(video_path),
+                '-vf', subtitles_filter,
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+        else:
+            logger.info("💻 Using CPU encoding (libx264)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', subtitles_filter,
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
 
         logger.info(f"Running FFmpeg: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -307,24 +348,42 @@ def image_to_video(
             f"format=nv12"
         )
 
-        # FFmpeg command with GPU NVENC encoding and zoom
-        cmd = [
-            'ffmpeg', '-y',
-            '-framerate', str(frame_rate),
-            '-loop', '1',
-            '-i', str(image_path),
-            '-vf', video_filter,
-            '-c:v', 'h264_nvenc',
-            '-preset', 'p4',
-            '-tune', 'hq',
-            '-rc:v', 'vbr',
-            '-cq:v', '23',
-            '-b:v', '0',
-            '-maxrate', '10M',
-            '-bufsize', '20M',
-            '-t', str(duracao),
-            str(output_path)
-        ]
+        # FFmpeg command - GPU or CPU encoding based on availability
+        if GPU_AVAILABLE:
+            logger.info("🎮 Using GPU encoding (NVENC)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-framerate', str(frame_rate),
+                '-loop', '1',
+                '-i', str(image_path),
+                '-vf', video_filter,
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-t', str(duracao),
+                str(output_path)
+            ]
+        else:
+            logger.info("💻 Using CPU encoding (libx264)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-framerate', str(frame_rate),
+                '-loop', '1',
+                '-i', str(image_path),
+                '-vf', video_filter,
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-t', str(duracao),
+                str(output_path)
+            ]
 
         logger.info(f"Running FFmpeg: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -498,31 +557,53 @@ def add_audio(
 
         logger.info(f"Speed adjustment: {speed_factor:.3f}x (pts={pts_multiplier:.6f})")
 
-        # FFmpeg command with NVENC encoding
-        # Note: CPU decode → CPU filter (setpts) → GPU encode (NVENC)
+        # FFmpeg command - GPU or CPU encoding based on availability
+        # Note: CPU decode → CPU filter (setpts) → GPU/CPU encode
         # We don't use -hwaccel cuda because setpts filter is CPU-only
         # and causes "Impossible to convert between formats" error
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', str(video_path),
-            '-i', str(audio_path),
-            '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
-            '-map', '[vout]',
-            '-map', '1:a',
-            '-c:v', 'h264_nvenc',
-            '-preset', 'p4',
-            '-tune', 'hq',
-            '-rc:v', 'vbr',
-            '-cq:v', '23',
-            '-b:v', '0',
-            '-maxrate', '10M',
-            '-bufsize', '20M',
-            '-c:a', 'aac',
-            '-b:a', '192k',
-            '-shortest',
-            '-movflags', '+faststart',
-            str(output_path)
-        ]
+        if GPU_AVAILABLE:
+            logger.info("🎮 Using GPU encoding (NVENC)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-i', str(audio_path),
+                '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
+                '-map', '[vout]',
+                '-map', '1:a',
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-shortest',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+        else:
+            logger.info("💻 Using CPU encoding (libx264)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-i', str(audio_path),
+                '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
+                '-map', '[vout]',
+                '-map', '1:a',
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-shortest',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
 
         logger.info(f"Running FFmpeg: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -655,6 +736,12 @@ if __name__ == "__main__":
     logger.info(f"📂 Output dir: {OUTPUT_DIR}")
     logger.info(f"🔢 Batch size: {BATCH_SIZE}")
     logger.info(f"🌐 HTTP server: port {HTTP_PORT}")
+
+    # GPU status
+    if GPU_AVAILABLE:
+        logger.info("🎮 GPU: ENABLED (NVENC acceleration)")
+    else:
+        logger.info("💻 GPU: DISABLED (CPU-only encoding)")
 
     # System resources
     cpu_count = multiprocessing.cpu_count()
