@@ -1,24 +1,35 @@
 # ==================================
 # Worker Python Dockerfile (RunPod Serverless)
 # ==================================
-# Ultra-minimal: Python slim + FFmpeg Ubuntu (with NVENC via RunPod GPU runtime)
-# Target: <700MB for ultra-fast cold start
+# Python slim + FFmpeg + Fonts for subtitle styling
+# Target: ~800MB with fonts for caption_style support
 
 FROM python:3.11-slim
 
 # Metadata
 LABEL maintainer="api-gpu-team"
-LABEL description="RunPod Serverless GPU Worker (Python) - Minimal with NVENC"
+LABEL description="RunPod Serverless GPU Worker (Python) - NVENC + Subtitle Fonts"
+LABEL version="2.0.0"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install FFmpeg from Ubuntu repos (RunPod provides NVENC via GPU runtime)
+# Install FFmpeg + Fonts for subtitle rendering with custom styling
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     ca-certificates \
+    fontconfig \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-roboto \
+    fonts-noto-core \
+    fonts-open-sans \
+    && fc-cache -fv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Log available fonts for debugging (shown during build)
+RUN echo "=== Fonts Available ===" && fc-list : family | sort -u
 
 # Working directory
 WORKDIR /app

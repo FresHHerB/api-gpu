@@ -8,8 +8,10 @@ import { logger } from '../../shared/utils/logger';
 import {
   CaptionRequest,
   Img2VidRequest,
-  AddAudioRequest
+  AddAudioRequest,
+  CaptionStyledRequest
 } from '../../shared/types';
+import { validateRequest, captionStyledRequestSchema } from '../../shared/middleware/validation';
 
 const router = Router();
 const runpodService = new RunPodService();
@@ -95,6 +97,59 @@ router.post('/video/caption', authenticateApiKey, async (req: Request, res: Resp
     });
   }
 });
+
+/**
+ * POST /video/caption_style
+ * Add SRT subtitles to video with custom styling (font, colors, border, position)
+ */
+router.post(
+  '/video/caption_style',
+  authenticateApiKey,
+  validateRequest(captionStyledRequestSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    const startTime = Date.now();
+
+    try {
+      const data: CaptionStyledRequest = req.body;
+
+      logger.info('🎨 Styled caption request received', {
+        url_video: data.url_video,
+        url_srt: data.url_srt,
+        path: data.path,
+        output_filename: data.output_filename,
+        hasStyle: !!data.style,
+        styleConfig: data.style,
+        ip: req.ip
+      });
+
+      // Process via RunPod with custom styling
+      const result = await runpodService.processCaptionStyled(data);
+
+      const durationMs = Date.now() - startTime;
+
+      logger.info('✅ Styled caption completed', {
+        durationMs,
+        video_url: result.video_url,
+        forceStyle: result.stats?.forceStyle
+      });
+
+      res.json(result);
+
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+
+      logger.error('❌ Styled caption failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        durationMs
+      });
+
+      res.status(500).json({
+        error: 'Processing failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+);
 
 /**
  * POST /video/img2vid

@@ -172,9 +172,19 @@ def add_caption(
     url_srt: str,
     path: str,
     output_filename: str,
-    worker_id: str = None
+    worker_id: str = None,
+    force_style: str = None
 ) -> Dict[str, Any]:
-    """Add caption to video and upload to S3"""
+    """Add caption to video with optional custom styling and upload to S3
+
+    Args:
+        url_video: URL of the video file
+        url_srt: URL of the SRT subtitle file
+        path: S3 path for upload
+        output_filename: Output filename
+        worker_id: Worker identifier (optional)
+        force_style: ASS force_style string for subtitle styling (optional)
+    """
     video_id = str(uuid.uuid4())
     logger.info(f"Starting caption job: {video_id}")
 
@@ -190,13 +200,21 @@ def add_caption(
         # Normalize SRT path for FFmpeg (escape colons)
         normalized_srt = str(srt_path).replace('\\', '/').replace(':', '\\:')
 
+        # Build subtitles filter with optional force_style
+        if force_style:
+            logger.info(f"📝 Applying custom subtitle style: {force_style}")
+            subtitles_filter = f"subtitles=filename='{normalized_srt}':force_style='{force_style}'"
+        else:
+            logger.info("📝 Using default subtitle style")
+            subtitles_filter = f"subtitles=filename='{normalized_srt}'"
+
         # FFmpeg command with GPU NVENC encoding - VBR mode
         # Note: subtitles filter is incompatible with hwaccel_output_format cuda
         cmd = [
             'ffmpeg', '-y',
             '-hwaccel', 'cuda',
             '-i', str(video_path),
-            '-vf', f"subtitles=filename='{normalized_srt}'",
+            '-vf', subtitles_filter,
             '-c:v', 'h264_nvenc',
             '-preset', 'p4',
             '-tune', 'hq',
@@ -560,18 +578,25 @@ def handler(job: Dict) -> Dict[str, Any]:
             url_srt = job_input.get('url_srt')
             path = job_input.get('path')
             output_filename = job_input.get('output_filename')
+            force_style = job_input.get('force_style')  # Optional custom styling
 
             if not url_video or not url_srt or not path or not output_filename:
                 raise ValueError("Missing required fields: url_video, url_srt, path, output_filename")
 
-            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
-            result = add_caption(url_video, url_srt, path, output_filename, worker_id)
+            if force_style:
+                logger.info(f"📤 S3 upload with custom style: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+                logger.info(f"🎨 Style: {force_style}")
+            else:
+                logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+
+            result = add_caption(url_video, url_srt, path, output_filename, worker_id, force_style)
             return {
                 "success": True,
                 "video_url": result['video_url'],
                 "filename": result['filename'],
                 "s3_key": result['s3_key'],
-                "message": "Caption added and uploaded to S3 successfully"
+                "message": "Caption added and uploaded to S3 successfully",
+                "force_style_applied": force_style is not None
             }
 
         elif operation == 'img2vid':
