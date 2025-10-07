@@ -23,8 +23,8 @@ export const addAudioRequestSchema = Joi.object({
 });
 
 export const captionStyledRequestSchema = Joi.object({
-  url_video: Joi.string().uri().required(),
-  url_srt: Joi.string().uri().required(),
+  url_video: Joi.string().pattern(/^https?:\/\/.+/).required(),
+  url_srt: Joi.string().pattern(/^https?:\/\/.+/).required(),
   path: Joi.string().required(),
   output_filename: Joi.string().required(),
   style: Joi.object({
@@ -61,8 +61,46 @@ export const captionStyledRequestSchema = Joi.object({
 // Validation Middleware Factory
 // ============================================
 
+/**
+ * Encode URLs in request body to handle spaces and special characters
+ */
+const encodeUrls = (body: any): any => {
+  const encoded = { ...body };
+
+  // Encode URL fields if they exist and are not already encoded
+  if (encoded.url_video && typeof encoded.url_video === 'string') {
+    // Only encode if it contains unencoded characters
+    if (encoded.url_video.includes(' ') || encoded.url_video.includes('|')) {
+      encoded.url_video = encodeURI(encoded.url_video);
+    }
+  }
+
+  if (encoded.url_srt && typeof encoded.url_srt === 'string') {
+    if (encoded.url_srt.includes(' ') || encoded.url_srt.includes('|')) {
+      encoded.url_srt = encodeURI(encoded.url_srt);
+    }
+  }
+
+  if (encoded.url_audio && typeof encoded.url_audio === 'string') {
+    if (encoded.url_audio.includes(' ') || encoded.url_audio.includes('|')) {
+      encoded.url_audio = encodeURI(encoded.url_audio);
+    }
+  }
+
+  if (encoded.url_image && typeof encoded.url_image === 'string') {
+    if (encoded.url_image.includes(' ') || encoded.url_image.includes('|')) {
+      encoded.url_image = encodeURI(encoded.url_image);
+    }
+  }
+
+  return encoded;
+};
+
 export const validateRequest = (schema: Joi.ObjectSchema) => {
   return (req: Request, res: Response, next: NextFunction): void => {
+    // Auto-encode URLs before validation
+    req.body = encodeUrls(req.body);
+
     const { error, value } = schema.validate(req.body, {
       abortEarly: false,
       stripUnknown: true
