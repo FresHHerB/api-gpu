@@ -233,12 +233,12 @@ def add_caption(
             subtitles_filter = f"subtitles=filename='{normalized_srt}'"
 
         # FFmpeg command - GPU or CPU encoding based on availability
-        # Note: subtitles filter is incompatible with hwaccel_output_format cuda
+        # Note: We don't use -hwaccel cuda because it requires CUDA runtime in container
+        # NVENC encoding works with just GPU drivers from host (no CUDA runtime needed)
         if GPU_AVAILABLE:
-            logger.info("🎮 Using GPU encoding (NVENC)")
+            logger.info("🎮 Using GPU encoding (NVENC - CPU decode + GPU encode)")
             cmd = [
                 'ffmpeg', '-y',
-                '-hwaccel', 'cuda',
                 '-i', str(video_path),
                 '-vf', subtitles_filter,
                 '-c:v', 'h264_nvenc',
