@@ -152,27 +152,39 @@ Orchestrator receives result → Returns S3 URLs → Worker enters idle
 
 ### Transcription (Audio to Text + Subtitles)
 
-Transcrição de áudio usando RunPod faster-whisper com geração automática de legendas.
-
-**Input:**
-- Audio URL (MP3/WAV/AAC/M4A)
-- S3 path
-- Model (tiny, base, small, medium, large-v3, turbo)
-
-**Output:**
-- segments.srt (legendas tradicionais)
-- karaoke.ass (legendas karaoke com timing por palavra)
-- words.json (timestamps palavra-por-palavra)
-- Upload automático para S3
+Transcrição de áudio usando RunPod faster-whisper com geração automática de legendas em múltiplos formatos.
 
 **Características:**
-- GPU-accelerated transcription (OpenAI Whisper)
-- Word-level timestamps para karaoke
-- Voice Activity Detection (VAD)
-- Suporte multi-idioma
-- 2-4x mais rápido que Whisper API oficial
+- **GPU-accelerated**: OpenAI Whisper models otimizados para GPU
+- **Word-level timestamps**: Timing preciso por palavra para karaoke
+- **Voice Activity Detection (VAD)**: Remoção automática de silêncios
+- **Multi-idioma**: Suporte a 99 idiomas (detecção automática ou manual)
+- **Performance**: 2-4x mais rápido que Whisper API oficial
+- **Sem limite de tamanho**: Aceita áudios de qualquer duração
+- **Custo**: ~90% mais barato que alternativas cloud
 
-**Documentação:** Ver [TRANSCRIPTION_API.md](./TRANSCRIPTION_API.md)
+**Formatos de saída:**
+1. **segments.srt** - Legendas tradicionais (frases/sentenças completas)
+2. **karaoke.ass** - Legendas karaoke com timing palavra-por-palavra
+3. **words.json** - Timestamps brutos para customização programática
+
+**Modelos disponíveis:**
+- `tiny` - Rápido, menor acurácia (~1GB VRAM)
+- `base` - Balanceado (~1GB VRAM)
+- `small` - Boa acurácia (~2GB VRAM)
+- `medium` - Alta acurácia (~5GB VRAM)
+- `large-v3` - Máxima acurácia (~10GB VRAM) **[Recomendado]**
+- `turbo` - Otimizado para velocidade (~6GB VRAM)
+
+**Worker Configuration:**
+- RunPod Template: `faster-whisper-v1.0.10` (oh8mkykjy7)
+- Docker Image: `runpod/ai-api-faster-whisper:1.0.10`
+- Endpoint ID: `82jjrwujznxwvn`
+- Workers: 0-2 (auto-scaling)
+- Idle timeout: 5 min
+- Execution timeout: 40 min
+
+**Documentação completa:** Ver [TRANSCRIPTION_API.md](./TRANSCRIPTION_API.md)
 
 ---
 
@@ -199,7 +211,7 @@ Adiciona legendas SRT a vídeos com GPU encoding.
 
 ### Img2Vid (Image to Video - Batch)
 
-Converte imagens em vídeos com efeito Ken Burns (zoom).
+Converte imagens em vídeos com efeito Ken Burns (zoom) usando GPU encoding.
 
 **Input:**
 - Array de imagens (URL + duração)
@@ -210,11 +222,12 @@ Converte imagens em vídeos com efeito Ken Burns (zoom).
 - Upload direto para S3
 
 **Características:**
-- Batch processing: 5 imagens paralelas (configurável)
-- Ken Burns effect: Zoom 1.0 → 1.324 (32.4%)
-- Upscale: 6720x3840 (6x) para qualidade
-- Output: 1920x1080 @ 24fps
-- Codec: h264_nvenc preset p4, CQ 23 VBR
+- **Batch processing**: 5 imagens paralelas (configurável)
+- **Ken Burns effect**: Zoom 1.0 → 1.324 (32.4%)
+- **Upscale**: 6720x3840 (6x) para qualidade superior
+- **Output**: 1920x1080 @ 24fps
+- **Codec**: h264_nvenc preset p4, CQ 23 VBR
+- **Suporte**: Imagens horizontais e verticais (detecção automática)
 
 **FFmpeg Process:**
 ```
@@ -225,6 +238,15 @@ Converte imagens em vídeos com efeito Ken Burns (zoom).
 - Batches >50 imagens são distribuídos entre múltiplos workers
 - Máximo 3 workers paralelos
 - Resultados mesclados automaticamente
+
+**Worker Configuration:**
+- RunPod Template: `api-gpu-worker-fonts` (y829s32zfl)
+- Docker Image: `oreiasccp/api-gpu-worker:latest` (v2.0.0)
+- Endpoint ID: `rmmk1cilqjzm9x`
+- Workers: 0-3 (auto-scaling)
+- GPUs: AMPERE_16, AMPERE_24, RTX A4000, RTX A4500
+- Idle timeout: 5 min
+- Execution timeout: 40 min
 
 ---
 
@@ -290,11 +312,20 @@ NODE_ENV=production
 # API Authentication
 X_API_KEY=your-secure-api-key
 
-# RunPod
+# RunPod Configuration
 RUNPOD_API_KEY=rpa_your_key_here
-RUNPOD_ENDPOINT_ID=your_endpoint_id
-RUNPOD_IDLE_TIMEOUT=300
-RUNPOD_MAX_TIMEOUT=480
+
+# Video Processing Endpoint (img2vid, caption, addaudio)
+RUNPOD_ENDPOINT_ID=rmmk1cilqjzm9x
+
+# Transcription Endpoint (faster-whisper)
+RUNPOD_WHISPER_ENDPOINT_ID=82jjrwujznxwvn
+
+# Timeout Configuration (30 min execution)
+POLLING_MAX_ATTEMPTS=240              # 240 × 8s = 32 min max polling
+EXPRESS_TIMEOUT_MS=2100000            # 35 min (server timeout)
+RUNPOD_EXECUTION_TIMEOUT=2400         # 40 min (worker timeout)
+RUNPOD_IDLE_TIMEOUT=300               # 5 min (keep-alive)
 
 # S3/MinIO (used by worker)
 S3_ENDPOINT_URL=https://your-minio.example.com
@@ -361,6 +392,183 @@ X-API-Key: your-api-key
 | GET | `/runpod/config` | RunPod configuration |
 | GET | `/job/:jobId` | Check job status |
 | POST | `/job/:jobId/cancel` | Cancel running job |
+
+---
+
+### POST /transcribe
+
+**Description:** Transcreve áudio para texto e gera legendas em múltiplos formatos (SRT, ASS karaoke, JSON).
+
+**Request:**
+```json
+{
+  "audio_url": "https://example.com/audio.mp3",
+  "path": "Project Name/Video Title/transcriptions/",
+  "model": "large-v3",
+  "language": "pt",
+  "enable_vad": true,
+  "beam_size": 5,
+  "temperature": 0
+}
+```
+
+**Parameters:**
+- `audio_url` (string, **required**): Public URL do arquivo de áudio
+  - Formatos: MP3, WAV, M4A, AAC, FLAC, OGG
+  - Sem limite de tamanho ou duração
+- `path` (string, **required**): Prefixo S3 para upload dos arquivos
+  - Exemplo: `"Projeto/Video/transcriptions/"`
+  - Os arquivos serão salvos em: `bucket/path/segments.srt`, `bucket/path/karaoke.ass`, `bucket/path/words.json`
+- `model` (string, optional): Modelo Whisper a ser usado
+  - Opções: `tiny`, `base`, `small`, `medium`, `large-v3`, `turbo`
+  - Default: `large-v3` (máxima acurácia)
+- `language` (string, optional): Código do idioma (ISO 639-1)
+  - Exemplo: `pt`, `en`, `es`, `fr`, `de`
+  - Default: detecção automática
+- `enable_vad` (boolean, optional): Ativar Voice Activity Detection
+  - Default: `true` (remove silêncios)
+- `beam_size` (integer, optional): Tamanho do beam search
+  - Range: 1-10
+  - Default: `5` (balanceado entre velocidade e acurácia)
+- `temperature` (number, optional): Sampling temperature
+  - Range: 0-1
+  - Default: `0` (determinístico)
+
+**Response (200):**
+```json
+{
+  "code": 200,
+  "message": "Transcription completed successfully",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "language": "pt",
+  "transcription": "Era uma vez uma história...",
+  "files": {
+    "segments": {
+      "srt": "https://s3.../canais/Projeto/Video/transcriptions/segments.srt",
+      "vtt": "",
+      "json": "https://s3.../canais/Projeto/Video/transcriptions/words.json"
+    },
+    "words": {
+      "ass_karaoke": "https://s3.../canais/Projeto/Video/transcriptions/karaoke.ass",
+      "vtt_karaoke": "",
+      "lrc": "",
+      "json": "https://s3.../canais/Projeto/Video/transcriptions/words.json"
+    }
+  },
+  "execution": {
+    "startTime": "2025-10-07T10:00:00.000Z",
+    "endTime": "2025-10-07T10:02:30.000Z",
+    "durationMs": 150000,
+    "durationSeconds": 150
+  },
+  "stats": {
+    "segments": 42,
+    "words": 156,
+    "model": "large-v3",
+    "device": "cuda"
+  }
+}
+```
+
+**Generated Files:**
+
+1. **segments.srt** - Legendas tradicionais (SubRip)
+```srt
+1
+00:00:00,000 --> 00:00:03,500
+Era uma vez uma história
+
+2
+00:00:03,500 --> 00:00:07,200
+que aconteceu há muito tempo atrás
+```
+
+2. **karaoke.ass** - Legendas karaoke (ASS com timing por palavra)
+```ass
+[Script Info]
+Title: Karaoke Subtitles
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, ...
+Style: Karaoke,Arial,48,&H00FFFFFF,&H000088EF,...
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:03.50,Karaoke,,0,0,0,,{\k35}Era {\k28}uma {\k30}vez {\k42}uma {\k50}história
+```
+
+3. **words.json** - Timestamps palavra-por-palavra (JSON)
+```json
+{
+  "words": [
+    { "word": "Era", "start": 0.0, "end": 0.35 },
+    { "word": "uma", "start": 0.35, "end": 0.63 },
+    { "word": "vez", "start": 0.63, "end": 0.93 },
+    { "word": "uma", "start": 0.93, "end": 1.35 },
+    { "word": "história", "start": 1.35, "end": 1.85 }
+  ],
+  "metadata": {
+    "language": "pt",
+    "model": "large-v3",
+    "device": "cuda"
+  }
+}
+```
+
+**Error (400 - Bad Request):**
+```json
+{
+  "error": "Missing required parameter",
+  "message": "audio_url is required"
+}
+```
+
+**Error (500 - Internal Server Error):**
+```json
+{
+  "error": "Transcription failed",
+  "message": "Failed to download audio file",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "execution": {
+    "startTime": "2025-10-07T10:00:00.000Z",
+    "endTime": "2025-10-07T10:00:15.000Z",
+    "durationMs": 15000,
+    "durationSeconds": 15
+  }
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST https://your-api.com/transcribe \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "audio_url": "https://example.com/audio.mp3",
+    "path": "MyProject/Episode01/transcriptions/",
+    "model": "large-v3",
+    "language": "pt"
+  }'
+```
+
+**Use Cases:**
+
+1. **Legendas tradicionais**: Use `segments.srt` com `/video/caption`
+2. **Legendas karaoke**: Use `karaoke.ass` com `/video/caption` (estilos hardcoded)
+3. **Customização programática**: Use `words.json` para gerar legendas personalizadas
+4. **Análise de conteúdo**: Use `transcription` field para busca/indexação
+
+**Performance:**
+- Audio de 1 min: ~5-10 segundos (model large-v3)
+- Audio de 10 min: ~30-60 segundos (model large-v3)
+- Audio de 60 min: ~3-5 minutos (model large-v3)
+
+**Notes:**
+- Arquivos ASS salvos com estilos padrão (fonte Arial, tamanho 48, cor branca)
+- Para estilos customizados, use `words.json` e gere ASS programaticamente
+- VAD recomendado para áudios com pausas longas
+- Model `large-v3` recomendado para máxima acurácia
 
 ---
 
@@ -531,6 +739,76 @@ X-API-Key: your-api-key
 ### TypeScript Types
 
 ```typescript
+// ============================================
+// Transcription Types
+// ============================================
+
+interface TranscriptionRequest {
+  audio_url: string;
+  path: string;
+  model?: 'tiny' | 'base' | 'small' | 'medium' | 'large-v1' | 'large-v2' | 'large-v3' | 'turbo';
+  language?: string;
+  enable_vad?: boolean;
+  beam_size?: number;
+  temperature?: number;
+}
+
+interface TranscriptionWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+interface TranscriptionSegment {
+  id: number;
+  seek: number;
+  start: number;
+  end: number;
+  text: string;
+  tokens: number[];
+  temperature: number;
+  avg_logprob: number;
+  compression_ratio: number;
+  no_speech_prob: number;
+}
+
+interface TranscriptionResponse {
+  code: number;
+  message: string;
+  job_id: string;
+  language: string;
+  transcription: string;
+  files: {
+    segments: {
+      srt: string;
+      vtt: string;
+      json: string;
+    };
+    words?: {
+      ass_karaoke: string;
+      vtt_karaoke: string;
+      lrc: string;
+      json: string;
+    };
+  };
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: {
+    segments: number;
+    words: number;
+    model: string;
+    device: 'cuda' | 'cpu';
+  };
+}
+
+// ============================================
+// Video Processing Types
+// ============================================
+
 // Caption
 interface CaptionRequest {
   url_video: string;
@@ -641,6 +919,49 @@ Copie o **Endpoint ID** e **API Key** para `.env`.
 
 ---
 
+### Transcription Worker (RunPod Serverless)
+
+**Template Pré-configurado RunPod:**
+
+O worker de transcrição usa a imagem oficial do RunPod, não requer build próprio.
+
+RunPod Console → Templates → New Template
+
+```yaml
+Template Name: faster-whisper-production
+Container Image: runpod/ai-api-faster-whisper:1.0.10
+Docker Command: python -u handler.py
+Container Disk: 10 GB
+Serverless: Yes
+
+Environment Variables:
+  # Nenhuma variável necessária - worker oficial RunPod
+```
+
+**Criar Endpoint:**
+
+RunPod Console → Serverless → New Endpoint
+
+```yaml
+Endpoint Name: api-gpu-transcription
+Template: faster-whisper-production
+GPUs: AMPERE_16, AMPERE_24, RTX A4000, RTX A4500
+Workers Min: 0
+Workers Max: 2
+Idle Timeout: 300
+Execution Timeout: 2400
+FlashBoot: Enabled
+```
+
+Copie o **Endpoint ID** para `.env` como `RUNPOD_WHISPER_ENDPOINT_ID`.
+
+**Important:**
+- Worker oficial do RunPod, não requer manutenção
+- Upload de arquivos feito pelo orchestrator, não pelo worker
+- Workers compartilham quota com video endpoint (máx 5 total)
+
+---
+
 ### Orchestrator (VPS)
 
 **Opção A: Easypanel**
@@ -674,10 +995,17 @@ services:
       - X_API_KEY=${X_API_KEY}
       - RUNPOD_API_KEY=${RUNPOD_API_KEY}
       - RUNPOD_ENDPOINT_ID=${RUNPOD_ENDPOINT_ID}
+      - RUNPOD_WHISPER_ENDPOINT_ID=${RUNPOD_WHISPER_ENDPOINT_ID}
+      - POLLING_MAX_ATTEMPTS=${POLLING_MAX_ATTEMPTS}
+      - EXPRESS_TIMEOUT_MS=${EXPRESS_TIMEOUT_MS}
+      - RUNPOD_EXECUTION_TIMEOUT=${RUNPOD_EXECUTION_TIMEOUT}
+      - RUNPOD_IDLE_TIMEOUT=${RUNPOD_IDLE_TIMEOUT}
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL}
       - S3_ACCESS_KEY=${S3_ACCESS_KEY}
       - S3_SECRET_KEY=${S3_SECRET_KEY}
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - S3_REGION=${S3_REGION}
+      - BATCH_SIZE=${BATCH_SIZE}
     restart: unless-stopped
     volumes:
       - ./logs:/app/logs
@@ -696,6 +1024,123 @@ npm run build:orchestrator
 pm2 start dist/orchestrator/index.js --name api-gpu-orchestrator
 pm2 save
 pm2 startup
+```
+
+---
+
+## Exemplos de Uso Integrado
+
+### Workflow Completo: Audio → Transcrição → Video com Legendas
+
+**Step 1: Transcrever áudio**
+```bash
+curl -X POST https://your-api.com/transcribe \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "audio_url": "https://cdn.example.com/podcast-episode-01.mp3",
+    "path": "Podcast/Episode01/",
+    "model": "large-v3",
+    "language": "pt"
+  }'
+
+# Response:
+{
+  "files": {
+    "segments": {
+      "srt": "https://s3.../canais/Podcast/Episode01/segments.srt"
+    },
+    "words": {
+      "ass_karaoke": "https://s3.../canais/Podcast/Episode01/karaoke.ass"
+    }
+  }
+}
+```
+
+**Step 2: Adicionar legendas ao vídeo**
+```bash
+# Legendas tradicionais
+curl -X POST https://your-api.com/video/caption \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://cdn.example.com/video.mp4",
+    "url_srt": "https://s3.../canais/Podcast/Episode01/segments.srt",
+    "path": "Podcast/Episode01/final/",
+    "output_filename": "video_legendado.mp4"
+  }'
+
+# OU legendas karaoke
+curl -X POST https://your-api.com/video/caption \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://cdn.example.com/video.mp4",
+    "url_srt": "https://s3.../canais/Podcast/Episode01/karaoke.ass",
+    "path": "Podcast/Episode01/final/",
+    "output_filename": "video_karaoke.mp4"
+  }'
+```
+
+### Workflow: Imagens → Vídeos → Audio → Final
+
+**Step 1: Converter imagens em vídeos**
+```bash
+curl -X POST https://your-api.com/video/img2vid \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "images": [
+      {"id": "1", "image_url": "https://example.com/img1.jpg", "duracao": 5.0},
+      {"id": "2", "image_url": "https://example.com/img2.jpg", "duracao": 4.5}
+    ],
+    "path": "MeuProjeto/temp/"
+  }'
+
+# Response:
+{
+  "videos": [
+    {"id": "1", "video_url": "https://s3.../video_1.mp4"},
+    {"id": "2", "video_url": "https://s3.../video_2.mp4"}
+  ]
+}
+```
+
+**Step 2: Adicionar áudio a cada vídeo**
+```bash
+curl -X POST https://your-api.com/video/addaudio \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://s3.../video_1.mp4",
+    "url_audio": "https://cdn.example.com/audio1.mp3",
+    "path": "MeuProjeto/final/",
+    "output_filename": "video_1_final.mp4"
+  }'
+```
+
+**Step 3: Adicionar legendas (opcional)**
+```bash
+# Primeiro transcrever o áudio
+curl -X POST https://your-api.com/transcribe \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "audio_url": "https://cdn.example.com/audio1.mp3",
+    "path": "MeuProjeto/subs/",
+    "model": "large-v3"
+  }'
+
+# Depois adicionar legendas
+curl -X POST https://your-api.com/video/caption \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://s3.../video_1_final.mp4",
+    "url_srt": "https://s3.../MeuProjeto/subs/segments.srt",
+    "path": "MeuProjeto/final/",
+    "output_filename": "video_1_completo.mp4"
+  }'
 ```
 
 ---
