@@ -21,6 +21,7 @@ export class S3UploadService {
       throw new Error('S3 configuration missing: S3_ENDPOINT_URL, S3_ACCESS_KEY, or S3_SECRET_KEY');
     }
 
+    // Same configuration as worker Python (boto3)
     this.s3Client = new S3Client({
       endpoint,
       region,
@@ -28,10 +29,16 @@ export class S3UploadService {
         accessKeyId,
         secretAccessKey
       },
-      forcePathStyle: true // Required for MinIO
+      forcePathStyle: true, // Required for MinIO
+      requestHandler: {
+        requestTimeout: 30000, // 30s timeout
+        httpsAgent: {
+          maxSockets: 50
+        }
+      }
     });
 
-    console.log(`[S3UploadService] Initialized with bucket: ${this.bucketName}`);
+    console.log(`[S3UploadService] Initialized with bucket: ${this.bucketName}, endpoint: ${endpoint}`);
   }
 
   /**
@@ -48,34 +55,58 @@ export class S3UploadService {
     content: string | Buffer,
     contentType: string = 'text/plain'
   ): Promise<string> {
-    try {
-      // Ensure path ends with /
-      const normalizedPath = path.endsWith('/') ? path : `${path}/`;
-      const key = `${normalizedPath}${filename}`;
+    const maxRetries = 3;
+    const retryDelay = 2000; // 2 seconds
 
-      console.log(`[S3UploadService] Uploading to: ${this.bucketName}/${key}`);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Ensure path ends with /
+        const normalizedPath = path.endsWith('/') ? path : `${path}/`;
+        const key = `${normalizedPath}${filename}`;
 
-      const command = new PutObjectCommand({
-        Bucket: this.bucketName,
-        Key: key,
-        Body: content,
-        ContentType: contentType,
-        ACL: 'public-read' // Make file publicly accessible
-      });
+        if (attempt > 1) {
+          console.log(`[S3UploadService] Retry ${attempt}/${maxRetries} for: ${this.bucketName}/${key}`);
+        } else {
+          console.log(`[S3UploadService] Uploading to: ${this.bucketName}/${key}`);
+        }
 
-      await this.s3Client.send(command);
+        const command = new PutObjectCommand({
+          Bucket: this.bucketName,
+          Key: key,
+          Body: content,
+          ContentType: contentType,
+          ACL: 'public-read', // Same as worker Python
+          CacheControl: 'max-age=31536000' // 1 year cache
+        });
 
-      // Construct public URL
-      const endpoint = process.env.S3_ENDPOINT_URL!;
-      const publicUrl = `${endpoint}/${this.bucketName}/${key}`;
+        await this.s3Client.send(command);
 
-      console.log(`[S3UploadService] Upload successful: ${publicUrl}`);
+        // Construct public URL
+        const endpoint = process.env.S3_ENDPOINT_URL!;
+        const publicUrl = `${endpoint}/${this.bucketName}/${key}`;
 
-      return publicUrl;
-    } catch (error) {
-      console.error(`[S3UploadService] Upload failed:`, error);
-      throw new Error(`S3 upload failed: ${error}`);
+        console.log(`[S3UploadService] Upload successful: ${publicUrl}`);
+
+        return publicUrl;
+      } catch (error: any) {
+        const isLastAttempt = attempt === maxRetries;
+        const isDnsError = error.code === 'EAI_AGAIN' || error.code === 'ENOTFOUND' || error.code === 'ETIMEDOUT';
+
+        if (isDnsError && !isLastAttempt) {
+          console.warn(`[S3UploadService] DNS/Network error on attempt ${attempt}/${maxRetries}, retrying in ${retryDelay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          continue;
+        }
+
+        console.error(`[S3UploadService] Upload failed on attempt ${attempt}/${maxRetries}:`, error);
+
+        if (isLastAttempt) {
+          throw new Error(`S3 upload failed after ${maxRetries} attempts: ${error.message || error}`);
+        }
+      }
     }
+
+    throw new Error('S3 upload failed: max retries exceeded');
   }
 
   /**
