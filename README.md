@@ -404,11 +404,7 @@ X-API-Key: your-api-key
 {
   "audio_url": "https://example.com/audio.mp3",
   "path": "Project Name/Video Title/transcriptions/",
-  "model": "large-v3",
-  "language": "pt",
-  "enable_vad": true,
-  "beam_size": 5,
-  "temperature": 0
+  "model": "large-v3"
 }
 ```
 
@@ -547,8 +543,7 @@ curl -X POST https://your-api.com/transcribe \
   -d '{
     "audio_url": "https://example.com/audio.mp3",
     "path": "MyProject/Episode01/transcriptions/",
-    "model": "large-v3",
-    "language": "pt"
+    "model": "large-v3"
   }'
 ```
 
@@ -1040,8 +1035,7 @@ curl -X POST https://your-api.com/transcribe \
   -d '{
     "audio_url": "https://cdn.example.com/podcast-episode-01.mp3",
     "path": "Podcast/Episode01/",
-    "model": "large-v3",
-    "language": "pt"
+    "model": "large-v3"
   }'
 
 # Response:
