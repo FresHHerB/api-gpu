@@ -164,75 +164,35 @@ export class RunPodService {
    * Converts HTML color format to ASS format and builds force_style string
    */
   async processCaptionStyled(data: CaptionStyledRequest): Promise<VideoResponse> {
-    const startTime = Date.now();
+    logger.info('🎨 Processing styled caption request', {
+      url_video: data.url_video,
+      url_srt: data.url_srt,
+      hasStyle: !!data.style
+    });
 
-    try {
-      logger.info('🎨 Starting styled caption job', {
-        url_video: data.url_video,
-        url_srt: data.url_srt,
-        hasStyle: !!data.style
-      });
+    // Build force_style string from style configuration
+    const forceStyle = buildForceStyleString(data.style);
 
-      // Build force_style string from style configuration
-      const forceStyle = buildForceStyleString(data.style);
+    logger.info('📝 Generated force_style string', {
+      forceStyle,
+      styleConfig: data.style
+    });
 
-      logger.info('📝 Generated force_style string', {
-        forceStyle,
-        styleConfig: data.style
-      });
+    // Reuse processVideo with force_style parameter
+    const result = await this.processVideo('caption', {
+      url_video: data.url_video,
+      url_srt: data.url_srt,
+      path: data.path,
+      output_filename: data.output_filename,
+      force_style: forceStyle  // Send force_style to Python handler
+    });
 
-      // Submit job to RunPod with force_style parameter
-      const job = await this.submitJob('caption', {
-        url_video: data.url_video,
-        url_srt: data.url_srt,
-        path: data.path,
-        output_filename: data.output_filename,
-        force_style: forceStyle  // Send force_style to Python handler
-      });
-
-      logger.info('📤 Styled caption job submitted to RunPod', {
-        jobId: job.id,
-        status: job.status
-      });
-
-      // Poll for job completion
-      const result = await this.pollJobStatus(job.id);
-
-      const endTime = Date.now();
-      const durationMs = endTime - startTime;
-
-      logger.info('✅ Styled caption job completed', {
-        jobId: job.id,
-        durationMs,
-        durationSec: (durationMs / 1000).toFixed(2),
-        video_url: result.output.video_url
-      });
-
-      return {
-        code: 200,
-        message: 'Video caption with custom styling completed and uploaded to S3 successfully',
-        video_url: result.output.video_url,
-        execution: {
-          startTime: new Date(startTime).toISOString(),
-          endTime: new Date(endTime).toISOString(),
-          durationMs,
-          durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
-        },
-        stats: {
-          jobId: job.id,
-          delayTime: result.delayTime,
-          executionTime: result.executionTime,
-          forceStyle
-        }
-      };
-
-    } catch (error) {
-      logger.error('❌ Styled caption job failed', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-        durationMs: Date.now() - startTime
-      });
-      throw error;
+    // Add forceStyle to stats for debugging
+    if (result.stats) {
+      result.stats.forceStyle = forceStyle;
     }
+
+    return result;
   }
 
   /**

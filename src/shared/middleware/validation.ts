@@ -7,8 +7,10 @@ import { logger } from '../utils/logger';
 // ============================================
 
 export const captionRequestSchema = Joi.object({
-  url_video: Joi.string().uri().required(),
-  url_srt: Joi.string().uri().required()
+  url_video: Joi.string().pattern(/^https?:\/\/.+/).required(),
+  url_srt: Joi.string().pattern(/^https?:\/\/.+/).required(),
+  path: Joi.string().required(),
+  output_filename: Joi.string().required()
 });
 
 export const img2VidRequestSchema = Joi.object({

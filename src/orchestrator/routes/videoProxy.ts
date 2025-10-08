@@ -11,7 +11,11 @@ import {
   AddAudioRequest,
   CaptionStyledRequest
 } from '../../shared/types';
-import { validateRequest, captionStyledRequestSchema } from '../../shared/middleware/validation';
+import {
+  validateRequest,
+  captionRequestSchema,
+  captionStyledRequestSchema
+} from '../../shared/middleware/validation';
 
 const router = Router();
 const runpodService = new RunPodService();
@@ -48,55 +52,51 @@ const authenticateApiKey = (req: Request, res: Response, next: Function): void =
  * POST /video/caption
  * Add SRT subtitles to video
  */
-router.post('/video/caption', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
-  const startTime = Date.now();
+router.post(
+  '/video/caption',
+  authenticateApiKey,
+  validateRequest(captionRequestSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    const startTime = Date.now();
 
-  try {
-    const data: CaptionRequest = req.body;
+    try {
+      const data: CaptionRequest = req.body;
 
-    // Validate request
-    if (!data.url_video || !data.url_srt || !data.path || !data.output_filename) {
-      res.status(400).json({
-        error: 'Bad Request',
-        message: 'url_video, url_srt, path, and output_filename are required'
+      logger.info('📹 Caption request received', {
+        url_video: data.url_video,
+        url_srt: data.url_srt,
+        path: data.path,
+        output_filename: data.output_filename,
+        ip: req.ip
       });
-      return;
+
+      // Process via RunPod
+      const result = await runpodService.processVideo('caption', data);
+
+      const durationMs = Date.now() - startTime;
+
+      logger.info('✅ Caption completed', {
+        durationMs,
+        video_url: result.video_url
+      });
+
+      res.json(result);
+
+    } catch (error) {
+      const durationMs = Date.now() - startTime;
+
+      logger.error('❌ Caption failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        durationMs
+      });
+
+      res.status(500).json({
+        error: 'Processing failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
-
-    logger.info('📹 Caption request received', {
-      url_video: data.url_video,
-      url_srt: data.url_srt,
-      path: data.path,
-      output_filename: data.output_filename,
-      ip: req.ip
-    });
-
-    // Process via RunPod
-    const result = await runpodService.processVideo('caption', data);
-
-    const durationMs = Date.now() - startTime;
-
-    logger.info('✅ Caption completed', {
-      durationMs,
-      video_url: result.video_url
-    });
-
-    res.json(result);
-
-  } catch (error) {
-    const durationMs = Date.now() - startTime;
-
-    logger.error('❌ Caption failed', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      durationMs
-    });
-
-    res.status(500).json({
-      error: 'Processing failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    });
   }
-});
+);
 
 /**
  * POST /video/caption_style
@@ -324,51 +324,47 @@ router.get('/runpod/config', authenticateApiKey, (_req: Request, res: Response) 
  * POST /video/caption/async
  * Submit caption job and return immediately with jobId
  */
-router.post('/video/caption/async', authenticateApiKey, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const data: CaptionRequest = req.body;
+router.post(
+  '/video/caption/async',
+  authenticateApiKey,
+  validateRequest(captionRequestSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const data: CaptionRequest = req.body;
 
-    // Validate request
-    if (!data.url_video || !data.url_srt || !data.path || !data.output_filename) {
-      res.status(400).json({
-        error: 'Bad Request',
-        message: 'url_video, url_srt, path, and output_filename are required'
+      logger.info('📹 Caption async request received', {
+        url_video: data.url_video,
+        url_srt: data.url_srt,
+        path: data.path,
+        output_filename: data.output_filename,
+        ip: req.ip
       });
-      return;
+
+      // Submit job (returns immediately)
+      const job = await runpodService.submitJob('caption', data);
+
+      logger.info('✅ Caption job submitted', { jobId: job.id, status: job.status });
+
+      res.json({
+        jobId: job.id,
+        status: job.status,
+        statusUrl: `/video/job/${job.id}`,
+        resultUrl: `/video/job/${job.id}/result`,
+        message: 'Job submitted successfully. Use statusUrl to check progress.'
+      });
+
+    } catch (error) {
+      logger.error('❌ Caption async submit failed', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+
+      res.status(500).json({
+        error: 'Submit failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
-
-    logger.info('📹 Caption async request received', {
-      url_video: data.url_video,
-      url_srt: data.url_srt,
-      path: data.path,
-      output_filename: data.output_filename,
-      ip: req.ip
-    });
-
-    // Submit job (returns immediately)
-    const job = await runpodService.submitJob('caption', data);
-
-    logger.info('✅ Caption job submitted', { jobId: job.id, status: job.status });
-
-    res.json({
-      jobId: job.id,
-      status: job.status,
-      statusUrl: `/video/job/${job.id}`,
-      resultUrl: `/video/job/${job.id}/result`,
-      message: 'Job submitted successfully. Use statusUrl to check progress.'
-    });
-
-  } catch (error) {
-    logger.error('❌ Caption async submit failed', {
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-
-    res.status(500).json({
-      error: 'Submit failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    });
   }
-});
+);
 
 /**
  * POST /video/img2vid/async
