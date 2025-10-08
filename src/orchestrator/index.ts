@@ -16,6 +16,7 @@ dotenv.config();
 
 // Importar rotas
 import videoProxyRoutes from './routes/videoProxy';
+import transcriptionRoutes from './routes/transcription';
 
 // Importar cleanup scheduler
 import { startCleanupScheduler } from './utils/cleanup';
@@ -85,6 +86,9 @@ app.use('/output', express.static(path.join(process.cwd(), 'public', 'output')))
 // Video processing routes
 app.use('/', videoProxyRoutes);
 
+// Transcription routes
+app.use('/', transcriptionRoutes);
+
 // Root endpoint
 app.get('/', (_req, res) => {
   res.json({
@@ -98,7 +102,8 @@ app.get('/', (_req, res) => {
       sync: {
         caption: 'POST /video/caption',
         img2vid: 'POST /video/img2vid',
-        addaudio: 'POST /video/addaudio'
+        addaudio: 'POST /video/addaudio',
+        transcribe: 'POST /transcribe'
       },
       async: {
         captionSubmit: 'POST /video/caption/async',
@@ -110,7 +115,8 @@ app.get('/', (_req, res) => {
       },
       health: {
         service: 'GET /health',
-        runpod: 'GET /runpod/health'
+        runpod: 'GET /runpod/health',
+        transcription: 'GET /transcribe/health'
       }
     },
     documentation: '/docs'

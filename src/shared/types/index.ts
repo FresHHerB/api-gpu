@@ -193,6 +193,80 @@ export interface WorkerHealthCheck extends HealthCheckResponse {
 }
 
 // ============================================
+// Transcription Types
+// ============================================
+
+export interface TranscriptionRequest {
+  audio_url: string;
+  path: string; // S3 path for uploads (e.g., "transcriptions/job-uuid/")
+  model?: 'tiny' | 'base' | 'small' | 'medium' | 'large-v1' | 'large-v2' | 'large-v3' | 'turbo';
+  language?: string; // ISO language code (e.g., "pt", "en")
+  enable_vad?: boolean; // Voice Activity Detection
+  vad_filter?: boolean; // Filter silences
+  temperature?: number; // 0.0-1.0
+  beam_size?: number; // 1-10
+}
+
+export interface TranscriptionSegment {
+  id: number;
+  seek: number;
+  start: number;
+  end: number;
+  text: string;
+  tokens: number[];
+  temperature: number;
+  avg_logprob: number;
+  compression_ratio: number;
+  no_speech_prob: number;
+}
+
+export interface TranscriptionWord {
+  word: string;
+  start: number;
+  end: number;
+}
+
+export interface TranscriptionOutput {
+  segments: TranscriptionSegment[];
+  word_timestamps?: TranscriptionWord[];
+  detected_language: string;
+  transcription: string;
+  translation?: string | null;
+  device: 'cuda' | 'cpu';
+  model: string;
+}
+
+export interface TranscriptionFiles {
+  segments: {
+    srt: string; // S3 URL
+    vtt: string; // S3 URL
+    json: string; // S3 URL
+  };
+  words?: {
+    ass_karaoke: string; // S3 URL
+    vtt_karaoke: string; // S3 URL
+    lrc: string; // S3 URL
+    json: string; // S3 URL
+  };
+}
+
+export interface TranscriptionResponse {
+  code: number;
+  message: string;
+  job_id: string;
+  language: string;
+  transcription: string;
+  files: TranscriptionFiles;
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: Record<string, any>;
+}
+
+// ============================================
 // Express Extensions
 // ============================================
 

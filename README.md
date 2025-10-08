@@ -150,6 +150,32 @@ Orchestrator receives result → Returns S3 URLs → Worker enters idle
 
 ## Funcionalidades
 
+### Transcription (Audio to Text + Subtitles)
+
+Transcrição de áudio usando RunPod faster-whisper com geração automática de legendas.
+
+**Input:**
+- Audio URL (MP3/WAV/AAC/M4A)
+- S3 path
+- Model (tiny, base, small, medium, large-v3, turbo)
+
+**Output:**
+- segments.srt (legendas tradicionais)
+- karaoke.ass (legendas karaoke com timing por palavra)
+- words.json (timestamps palavra-por-palavra)
+- Upload automático para S3
+
+**Características:**
+- GPU-accelerated transcription (OpenAI Whisper)
+- Word-level timestamps para karaoke
+- Voice Activity Detection (VAD)
+- Suporte multi-idioma
+- 2-4x mais rápido que Whisper API oficial
+
+**Documentação:** Ver [TRANSCRIPTION_API.md](./TRANSCRIPTION_API.md)
+
+---
+
 ### Caption (Legendas SRT)
 
 Adiciona legendas SRT a vídeos com GPU encoding.
@@ -326,9 +352,11 @@ X-API-Key: your-api-key
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check (no auth) |
+| POST | `/transcribe` | Audio transcription → SRT/ASS/JSON |
 | POST | `/video/caption` | Add SRT subtitles |
 | POST | `/video/img2vid` | Convert images to videos |
 | POST | `/video/addaudio` | Add/replace audio |
+| GET | `/transcribe/health` | Transcription service health |
 | GET | `/runpod/health` | RunPod endpoint status |
 | GET | `/runpod/config` | RunPod configuration |
 | GET | `/job/:jobId` | Check job status |
