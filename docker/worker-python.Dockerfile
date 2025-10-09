@@ -40,8 +40,9 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
     && rm -rf /root/.cache/pip
 
-# Copy handler
+# Copy handler and caption generator
 COPY src/worker-python/rp_handler.py .
+COPY src/worker-python/caption_generator.py .
 
 # Create necessary directories
 RUN mkdir -p /tmp/work /tmp/output

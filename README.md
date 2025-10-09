@@ -188,24 +188,46 @@ Transcrição de áudio usando RunPod faster-whisper com geração automática d
 
 ---
 
-### Caption (Legendas SRT)
+### Caption Style (Legendas com Estilo Customizado)
 
-Adiciona legendas SRT a vídeos com GPU encoding.
+Sistema de legendas com estilo totalmente customizável usando formato ASS (Advanced SubStation Alpha). Suporta dois modos de renderização:
 
-**Input:**
-- Video URL (MP4)
-- Subtitle URL (SRT)
-- S3 path
-- Output filename
+**1. Segments Mode** - Legendas tradicionais (baseadas em SRT)
+- Entrada: arquivo SRT com frases/sentenças
+- Estilos customizáveis: fonte, tamanho, cores, bordas, posicionamento
+- Ideal para: vídeos com legendas convencionais
 
-**Output:**
-- Video com legendas embedded
-- Upload direto para S3
+**2. Highlight Mode** - Legendas karaoke (word-by-word)
+- Entrada: JSON com timing palavra-por-palavra
+- Sistema de 2 layers: texto base + palavra ativa destacada
+- Estilos customizáveis: fonte, cores de texto/highlight, fundo, bordas
+- Ideal para: vídeos educacionais, karaoke, acompanhamento de leitura
+
+**Características:**
+- **GPU Encoding**: FFmpeg + NVENC (h264_nvenc)
+- **Formato ASS**: Suporte completo a estilos avançados
+- **Customização total**: Cores, fontes, bordas, posicionamento, opacidade
+- **Fontes incluídas**: Arial, Arial Black, Roboto, Open Sans, Noto Sans
+- **Resolução**: 1920x1080 (Full HD)
+- **Upload direto**: Resultados salvos automaticamente em S3/MinIO
 
 **FFmpeg Process:**
+```bash
+# Segments (SRT → ASS com estilo)
+-i video.mp4 -vf "ass=styled_subtitles.ass" -c:v h264_nvenc -preset p4
+
+# Highlight (JSON → ASS 2-layer karaoke)
+-i video.mp4 -vf "ass=highlight_subtitles.ass" -c:v h264_nvenc -preset p4
 ```
--i video.mp4 -vf subtitles=file.srt -c:v h264_nvenc -preset p4
-```
+
+**Worker Configuration:**
+- RunPod Template: `api-gpu-worker-v3` (5lxj8f2wmc)
+- Docker Image: `oreiasccp/api-gpu-worker:latest`
+- Endpoint ID: `1hedwwffegvj7u`
+- Workers: 0-3 (auto-scaling)
+- GPUs: AMPERE_16, AMPERE_24, RTX A4000, RTX A4500
+- Idle timeout: 5 min
+- Execution timeout: 40 min
 
 ---
 
@@ -384,9 +406,12 @@ X-API-Key: your-api-key
 |--------|----------|-------------|
 | GET | `/health` | Health check (no auth) |
 | POST | `/transcribe` | Audio transcription → SRT/ASS/JSON |
-| POST | `/video/caption` | Add SRT subtitles |
+| POST | `/caption_style/segments` | Add styled SRT subtitles (custom ASS) |
+| POST | `/caption_style/highlight` | Add karaoke word-by-word subtitles |
+| POST | `/video/caption` | Add SRT subtitles (legacy) |
 | POST | `/video/img2vid` | Convert images to videos |
 | POST | `/video/addaudio` | Add/replace audio |
+| GET | `/caption_style/health` | Caption style service health |
 | GET | `/transcribe/health` | Transcription service health |
 | GET | `/runpod/health` | RunPod endpoint status |
 | GET | `/runpod/config` | RunPod configuration |
@@ -564,6 +589,310 @@ curl -X POST https://your-api.com/transcribe \
 - Para estilos customizados, use `words.json` e gere ASS programaticamente
 - VAD recomendado para áudios com pausas longas
 - Model `large-v3` recomendado para máxima acurácia
+
+---
+
+### POST /caption_style/segments
+
+**Description:** Gera vídeo com legendas SRT estilizadas usando formato ASS customizável. Ideal para legendas tradicionais com controle total sobre aparência.
+
+**Request (Payload Completo com Todos os Parâmetros):**
+```json
+{
+  "url_video": "https://example.com/video.mp4",
+  "url_srt": "https://s3.example.com/subtitles.srt",
+  "path": "Project Name/Video Title/videos/",
+  "output_filename": "video_legendado_estilizado.mp4",
+  "style": {
+    "font": {
+      "name": "Arial",
+      "size": 36,
+      "bold": true
+    },
+    "colors": {
+      "primary": "#FFFFFF",
+      "outline": "#000000"
+    },
+    "border": {
+      "style": 1,
+      "width": 3
+    },
+    "position": {
+      "alignment": "bottom_center",
+      "marginVertical": 20
+    }
+  }
+}
+```
+
+**Request (Payload Mínimo - Usa Valores Padrão):**
+```json
+{
+  "url_video": "https://example.com/video.mp4",
+  "url_srt": "https://s3.example.com/subtitles.srt",
+  "path": "Project Name/Video Title/videos/",
+  "output_filename": "video_legendado.mp4"
+}
+```
+
+**Parameters:**
+
+| Campo | Tipo | Obrigatório | Padrão | Descrição |
+|-------|------|-------------|--------|-----------|
+| `url_video` | string (URI) | ✅ | - | URL pública do vídeo (MP4) |
+| `url_srt` | string (URI) | ✅ | - | URL pública do arquivo SRT |
+| `path` | string | ✅ | - | Prefixo S3 para upload (ex: `"Project/videos/"`) |
+| `output_filename` | string | ✅ | - | Nome do arquivo de saída (ex: `"video.mp4"`) |
+| `style.font.name` | string | ❌ | `"Arial"` | Nome da fonte |
+| `style.font.size` | number | ❌ | `36` | Tamanho da fonte (20-200) |
+| `style.font.bold` | boolean | ❌ | `true` | Negrito |
+| `style.colors.primary` | string | ❌ | `"#FFFFFF"` | Cor do texto (hex) |
+| `style.colors.outline` | string | ❌ | `"#000000"` | Cor da borda (hex) |
+| `style.border.style` | number | ❌ | `1` | Estilo da borda (1=outline, 3=opaque box, 4=rounded box) |
+| `style.border.width` | number | ❌ | `3` | Largura da borda (0-10) |
+| `style.position.alignment` | string | ❌ | `"bottom_center"` | Posição da legenda |
+| `style.position.marginVertical` | number | ❌ | `20` | Margem vertical (0-500) |
+
+**Position Values:**
+- `bottom_left`, `bottom_center`, `bottom_right`
+- `middle_left`, `middle_center`, `middle_right`
+- `top_left`, `top_center`, `top_right`
+
+**Response (200):**
+```json
+{
+  "code": 200,
+  "message": "Video with styled segments subtitles completed successfully",
+  "video_url": "https://s3.../canais/Project/videos/video_legendado_estilizado.mp4",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "execution": {
+    "startTime": "2025-10-09T22:00:00.000Z",
+    "endTime": "2025-10-09T22:01:30.000Z",
+    "durationMs": 90000,
+    "durationSeconds": 90
+  },
+  "stats": {
+    "jobId": "runpod-job-abc123",
+    "delayTime": 12500,
+    "executionTime": 8200
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "error": "Validation failed",
+  "message": "url_video is required",
+  "job_id": "550e8400-..."
+}
+```
+
+**cURL Example (Mínimo):**
+```bash
+curl -X POST https://your-api.com/caption_style/segments \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_srt": "https://s3.../subtitles.srt",
+    "path": "MyProject/final/",
+    "output_filename": "video_final.mp4"
+  }'
+```
+
+**cURL Example (Customizado):**
+```bash
+curl -X POST https://your-api.com/caption_style/segments \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_srt": "https://s3.../subtitles.srt",
+    "path": "MyProject/final/",
+    "output_filename": "video_styled.mp4",
+    "style": {
+      "font": {"name": "Roboto", "size": 48, "bold": true},
+      "colors": {"primary": "#FFFF00", "outline": "#FF0000"},
+      "border": {"style": 4, "width": 5},
+      "position": {"alignment": "top_center", "marginVertical": 50}
+    }
+  }'
+```
+
+---
+
+### POST /caption_style/highlight
+
+**Description:** Gera vídeo com legendas karaoke word-by-word usando sistema de 2 layers ASS. Ideal para vídeos educacionais, karaoke, e acompanhamento de leitura.
+
+**Request (Payload Completo com Todos os Parâmetros):**
+```json
+{
+  "url_video": "https://example.com/video.mp4",
+  "url_words_json": "https://s3.example.com/words.json",
+  "path": "Project Name/Video Title/karaoke/",
+  "output_filename": "video_karaoke.mp4",
+  "style": {
+    "fonte": "Arial Black",
+    "tamanho_fonte": 72,
+    "fundo_opacidade": 128,
+    "fundo_cor_r": 0,
+    "fundo_cor_g": 0,
+    "fundo_cor_b": 0,
+    "fundo_arredondado": true,
+    "texto_cor_r": 255,
+    "texto_cor_g": 255,
+    "texto_cor_b": 255,
+    "highlight_cor_r": 214,
+    "highlight_cor_g": 0,
+    "highlight_cor_b": 0,
+    "highlight_borda": 12,
+    "padding_horizontal": 40,
+    "padding_vertical": 80,
+    "position": "bottom_center"
+  }
+}
+```
+
+**Request (Payload Mínimo - Usa Valores Padrão):**
+```json
+{
+  "url_video": "https://example.com/video.mp4",
+  "url_words_json": "https://s3.example.com/words.json",
+  "path": "Project/karaoke/",
+  "output_filename": "video_karaoke.mp4"
+}
+```
+
+**Parameters:**
+
+| Campo | Tipo | Obrigatório | Padrão | Descrição |
+|-------|------|-------------|--------|-----------|
+| `url_video` | string (URI) | ✅ | - | URL pública do vídeo (MP4) |
+| `url_words_json` | string (URI) | ✅ | - | URL pública do JSON com palavras |
+| `path` | string | ✅ | - | Prefixo S3 para upload |
+| `output_filename` | string | ✅ | - | Nome do arquivo de saída |
+| `style.fonte` | string | ❌ | `"Arial Black"` | Nome da fonte |
+| `style.tamanho_fonte` | number | ❌ | `72` | Tamanho da fonte (20-200) |
+| `style.fundo_opacidade` | number | ❌ | `128` | Opacidade do fundo (0-255) |
+| `style.fundo_cor_r` | number | ❌ | `0` | Fundo: componente Red (0-255) |
+| `style.fundo_cor_g` | number | ❌ | `0` | Fundo: componente Green (0-255) |
+| `style.fundo_cor_b` | number | ❌ | `0` | Fundo: componente Blue (0-255) |
+| `style.fundo_arredondado` | boolean | ❌ | `true` | Fundo com cantos arredondados |
+| `style.texto_cor_r` | number | ❌ | `255` | Texto: componente Red (0-255) |
+| `style.texto_cor_g` | number | ❌ | `255` | Texto: componente Green (0-255) |
+| `style.texto_cor_b` | number | ❌ | `255` | Texto: componente Blue (0-255) |
+| `style.highlight_cor_r` | number | ❌ | `214` | Highlight: componente Red (0-255) |
+| `style.highlight_cor_g` | number | ❌ | `0` | Highlight: componente Green (0-255) |
+| `style.highlight_cor_b` | number | ❌ | `0` | Highlight: componente Blue (0-255) |
+| `style.highlight_borda` | number | ❌ | `12` | Largura da borda do highlight (1-50) |
+| `style.padding_horizontal` | number | ❌ | `40` | Espaçamento horizontal (0-500) |
+| `style.padding_vertical` | number | ❌ | `80` | Espaçamento vertical (0-500) |
+| `style.position` | string | ❌ | `"bottom_center"` | Posição da legenda |
+
+**Position Values:**
+- `bottom_left`, `bottom_center`, `bottom_right`
+- `middle_left`, `middle_center`, `middle_right`
+- `top_left`, `top_center`, `top_right`
+
+**Formato do JSON de Palavras (url_words_json):**
+```json
+{
+  "words": [
+    { "word": "Era", "start": 0.0, "end": 0.35 },
+    { "word": "uma", "start": 0.35, "end": 0.63 },
+    { "word": "vez", "start": 0.63, "end": 0.93 }
+  ]
+}
+```
+
+**Response (200):**
+```json
+{
+  "code": 200,
+  "message": "Video with highlight subtitles completed successfully",
+  "video_url": "https://s3.../canais/Project/karaoke/video_karaoke.mp4",
+  "job_id": "d5faa27c-1da4-4677-8042-bbb46758893f",
+  "execution": {
+    "startTime": "2025-10-09T22:24:19.472Z",
+    "endTime": "2025-10-09T22:24:43.176Z",
+    "durationMs": 23704,
+    "durationSeconds": 23.7
+  },
+  "stats": {
+    "jobId": "6e76440d-bd43-4e5b-bce8-223e13449599-u2",
+    "delayTime": 12915,
+    "executionTime": 6038
+  }
+}
+```
+
+**Error (400):**
+```json
+{
+  "error": "Validation failed",
+  "message": "url_words_json is required",
+  "job_id": "550e8400-..."
+}
+```
+
+**cURL Example (Mínimo):**
+```bash
+curl -X POST https://your-api.com/caption_style/highlight \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_words_json": "https://s3.../words.json",
+    "path": "MyProject/karaoke/",
+    "output_filename": "video_karaoke.mp4"
+  }'
+```
+
+**cURL Example (Verde Neon):**
+```bash
+curl -X POST https://your-api.com/caption_style/highlight \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
+  -d '{
+    "url_video": "https://example.com/video.mp4",
+    "url_words_json": "https://s3.../words.json",
+    "path": "MyProject/karaoke/",
+    "output_filename": "video_karaoke_green.mp4",
+    "style": {
+      "fonte": "Arial Black",
+      "tamanho_fonte": 72,
+      "texto_cor_r": 255,
+      "texto_cor_g": 255,
+      "texto_cor_b": 255,
+      "highlight_cor_r": 0,
+      "highlight_cor_g": 255,
+      "highlight_cor_b": 0,
+      "highlight_borda": 15,
+      "fundo_opacidade": 180,
+      "position": "bottom_center"
+    }
+  }'
+```
+
+**Use Cases:**
+
+1. **Karaoke para música**: Use JSON do `/transcribe` com `words.json`
+2. **Vídeos educacionais**: Destaque palavra por palavra para aprendizado de leitura
+3. **Legenda acessível**: Facilita acompanhamento para pessoas com dificuldade de leitura
+4. **Conteúdo infantil**: Animação de palavras sincronizada com narração
+
+**Performance:**
+- Vídeo 10s: ~6-8 segundos de processamento
+- Vídeo 60s: ~15-20 segundos de processamento
+- Cold start (worker inativo): +10-15 segundos
+
+**Notes:**
+- JSON de palavras pode ser obtido do endpoint `/transcribe` (campo `files.words.json`)
+- Sistema de 2 layers: Layer 0 (texto completo) + Layer 2 (palavra ativa)
+- Palavras agrupadas em linhas de 4 palavras, máximo 2 linhas por diálogo
+- Texto sempre renderizado em UPPERCASE para melhor legibilidade
 
 ---
 

@@ -20,6 +20,9 @@ from concurrent.futures import ThreadPoolExecutor
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import threading
 
+# Import caption generator
+from caption_generator import generate_ass_from_srt, generate_ass_highlight
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -638,6 +641,218 @@ def add_audio(
         audio_path.unlink(missing_ok=True)
 
 
+def add_caption_segments(
+    url_video: str,
+    url_srt: str,
+    path: str,
+    output_filename: str,
+    style: Dict[str, Any],
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """
+    Add segments caption with custom styling to video and upload to S3
+
+    Args:
+        url_video: URL of the video file
+        url_srt: URL of the SRT subtitle file
+        path: S3 path for upload
+        output_filename: Output filename
+        style: Style configuration dict
+        worker_id: Worker identifier (optional)
+    """
+    video_id = str(uuid.uuid4())
+    logger.info(f"Starting caption segments job: {video_id}")
+
+    video_path = WORK_DIR / f"{video_id}_input.mp4"
+    srt_path = WORK_DIR / f"{video_id}_caption.srt"
+    ass_path = WORK_DIR / f"{video_id}_caption.ass"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        # Download video and SRT
+        download_file(url_video, video_path)
+        download_file(url_srt, srt_path)
+
+        # Generate ASS file from SRT with custom styling
+        logger.info(f"Generating ASS from SRT with custom style")
+        generate_ass_from_srt(srt_path, ass_path, style)
+
+        # Normalize ASS path for FFmpeg (escape colons)
+        normalized_ass = str(ass_path).replace('\\', '/').replace(':', '\\:')
+
+        # FFmpeg command with ASS subtitles
+        if GPU_AVAILABLE:
+            logger.info("🎮 Using GPU encoding (NVENC)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f"ass='{normalized_ass}'",
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+        else:
+            logger.info("💻 Using CPU encoding (libx264)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f"ass='{normalized_ass}'",
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Caption segments added: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Upload to S3
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local file after S3 upload
+        output_path.unlink(missing_ok=True)
+
+        return {
+            'video_url': video_url,
+            'filename': output_filename,
+            's3_key': s3_key
+        }
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input files
+        video_path.unlink(missing_ok=True)
+        srt_path.unlink(missing_ok=True)
+        ass_path.unlink(missing_ok=True)
+
+
+def add_caption_highlight(
+    url_video: str,
+    url_words_json: str,
+    path: str,
+    output_filename: str,
+    style: Dict[str, Any],
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """
+    Add highlight caption (word-level) to video and upload to S3
+
+    Args:
+        url_video: URL of the video file
+        url_words_json: URL of the words JSON file
+        path: S3 path for upload
+        output_filename: Output filename
+        style: Style configuration dict
+        worker_id: Worker identifier (optional)
+    """
+    video_id = str(uuid.uuid4())
+    logger.info(f"Starting caption highlight job: {video_id}")
+
+    video_path = WORK_DIR / f"{video_id}_input.mp4"
+    json_path = WORK_DIR / f"{video_id}_words.json"
+    ass_path = WORK_DIR / f"{video_id}_highlight.ass"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        # Download video and words JSON
+        download_file(url_video, video_path)
+        download_file(url_words_json, json_path)
+
+        # Generate ASS file with highlight from JSON
+        logger.info(f"Generating highlight ASS from JSON")
+        generate_ass_highlight(json_path, ass_path, style)
+
+        # Normalize ASS path for FFmpeg (escape colons)
+        normalized_ass = str(ass_path).replace('\\', '/').replace(':', '\\:')
+
+        # FFmpeg command with ASS subtitles
+        if GPU_AVAILABLE:
+            logger.info("🎮 Using GPU encoding (NVENC)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f"ass='{normalized_ass}'",
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+        else:
+            logger.info("💻 Using CPU encoding (libx264)")
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', str(video_path),
+                '-vf', f"ass='{normalized_ass}'",
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'copy',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Caption highlight added: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Upload to S3
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local file after S3 upload
+        output_path.unlink(missing_ok=True)
+
+        return {
+            'video_url': video_url,
+            'filename': output_filename,
+            's3_key': s3_key
+        }
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input files
+        video_path.unlink(missing_ok=True)
+        json_path.unlink(missing_ok=True)
+        ass_path.unlink(missing_ok=True)
+
+
 def handler(job: Dict) -> Dict[str, Any]:
     """
     RunPod handler function
@@ -715,6 +930,50 @@ def handler(job: Dict) -> Dict[str, Any]:
                 "speed_factor": result['speed_factor'],
                 "s3_key": result['s3_key'],
                 "message": "Audio added and uploaded to S3 successfully"
+            }
+
+        elif operation == 'caption_segments':
+            url_video = job_input.get('url_video')
+            url_srt = job_input.get('url_srt')
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
+            style = job_input.get('style', {})
+
+            if not url_video or not url_srt or not path or not output_filename:
+                raise ValueError("Missing required fields: url_video, url_srt, path, output_filename")
+
+            logger.info(f"📤 S3 upload with segments styling: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            logger.info(f"🎨 Style: {style}")
+
+            result = add_caption_segments(url_video, url_srt, path, output_filename, style, worker_id)
+            return {
+                "success": True,
+                "video_url": result['video_url'],
+                "filename": result['filename'],
+                "s3_key": result['s3_key'],
+                "message": "Caption segments added and uploaded to S3 successfully"
+            }
+
+        elif operation == 'caption_highlight':
+            url_video = job_input.get('url_video')
+            url_words_json = job_input.get('url_words_json')
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
+            style = job_input.get('style', {})
+
+            if not url_video or not url_words_json or not path or not output_filename:
+                raise ValueError("Missing required fields: url_video, url_words_json, path, output_filename")
+
+            logger.info(f"📤 S3 upload with highlight styling: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            logger.info(f"🎨 Style: {style}")
+
+            result = add_caption_highlight(url_video, url_words_json, path, output_filename, style, worker_id)
+            return {
+                "success": True,
+                "video_url": result['video_url'],
+                "filename": result['filename'],
+                "s3_key": result['s3_key'],
+                "message": "Caption highlight added and uploaded to S3 successfully"
             }
 
         else:
