@@ -221,13 +221,14 @@ Sistema de legendas com estilo totalmente customizável usando formato ASS (Adva
 ```
 
 **Worker Configuration:**
-- RunPod Template: `api-gpu-worker-v3` (5lxj8f2wmc)
-- Docker Image: `oreiasccp/api-gpu-worker:latest`
-- Endpoint ID: `1hedwwffegvj7u`
+- RunPod Template: `api-gpu-worker-v5` (40n7kfux2m)
+- Docker Image: `oreiasccp/api-gpu-worker:latest` (opacity 0-100% + word grouping)
+- Endpoint ID: `o63s0zonkzi67m`
 - Workers: 0-3 (auto-scaling)
-- GPUs: AMPERE_16, AMPERE_24, RTX A4000, RTX A4500
+- GPUs: AMPERE_16, AMPERE_24, RTX A4000
 - Idle timeout: 5 min
 - Execution timeout: 40 min
+- HTTP Port: 8000 (video downloads)
 
 ---
 
@@ -737,14 +738,16 @@ curl -X POST https://your-api.com/caption_style/segments \
     "fonte": "Arial Black",
     "tamanho_fonte": 72,
     "fundo_cor": "#000000",
-    "fundo_opacidade": 128,
+    "fundo_opacidade": 50,
     "fundo_arredondado": true,
     "texto_cor": "#FFFFFF",
     "highlight_cor": "#D60000",
     "highlight_borda": 12,
     "padding_horizontal": 40,
     "padding_vertical": 80,
-    "position": "bottom_center"
+    "position": "bottom_center",
+    "words_per_line": 4,
+    "max_lines": 2
   }
 }
 ```
@@ -770,7 +773,7 @@ curl -X POST https://your-api.com/caption_style/segments \
 | `style.fonte` | string | ❌ | `"Arial Black"` | Nome da fonte |
 | `style.tamanho_fonte` | number | ❌ | `72` | Tamanho da fonte (20-200) |
 | `style.fundo_cor` | string (hex) | ❌ | `"#000000"` | Cor do fundo em hexadecimal |
-| `style.fundo_opacidade` | number | ❌ | `128` | Opacidade do fundo (0-255) |
+| `style.fundo_opacidade` | number | ❌ | `50` | Opacidade do fundo em % (0-100) - Convertida automaticamente |
 | `style.fundo_arredondado` | boolean | ❌ | `true` | Fundo com cantos arredondados |
 | `style.texto_cor` | string (hex) | ❌ | `"#FFFFFF"` | Cor do texto em hexadecimal |
 | `style.highlight_cor` | string (hex) | ❌ | `"#D60000"` | Cor do highlight em hexadecimal |
@@ -778,6 +781,8 @@ curl -X POST https://your-api.com/caption_style/segments \
 | `style.padding_horizontal` | number | ❌ | `40` | Espaçamento horizontal (0-500) |
 | `style.padding_vertical` | number | ❌ | `80` | Espaçamento vertical (0-500) |
 | `style.position` | string | ❌ | `"bottom_center"` | Posição da legenda |
+| `style.words_per_line` | number | ❌ | `4` | Palavras por linha (1-10) |
+| `style.max_lines` | number | ❌ | `2` | Máximo de linhas por diálogo (1-5) |
 
 **Position Values:**
 - `bottom_left`, `bottom_center`, `bottom_right`
@@ -838,7 +843,7 @@ curl -X POST https://your-api.com/caption_style/highlight \
   }'
 ```
 
-**cURL Example (Verde Neon):**
+**cURL Example (Customizado - Verde Neon com Opacidade 70% e 3 Palavras por Linha):**
 ```bash
 curl -X POST https://your-api.com/caption_style/highlight \
   -H "Content-Type: application/json" \
@@ -852,11 +857,13 @@ curl -X POST https://your-api.com/caption_style/highlight \
       "fonte": "Arial Black",
       "tamanho_fonte": 72,
       "fundo_cor": "#000000",
-      "fundo_opacidade": 180,
+      "fundo_opacidade": 70,
       "texto_cor": "#FFFFFF",
       "highlight_cor": "#00FF00",
       "highlight_borda": 15,
-      "position": "bottom_center"
+      "position": "bottom_center",
+      "words_per_line": 3,
+      "max_lines": 2
     }
   }'
 ```
@@ -874,10 +881,14 @@ curl -X POST https://your-api.com/caption_style/highlight \
 - Cold start (worker inativo): +10-15 segundos
 
 **Notes:**
-- JSON de palavras pode ser obtido do endpoint `/transcribe` (campo `files.words.json`)
-- Sistema de 2 layers: Layer 0 (texto completo) + Layer 2 (palavra ativa)
-- Palavras agrupadas em linhas de 4 palavras, máximo 2 linhas por diálogo
-- Texto sempre renderizado em UPPERCASE para melhor legibilidade
+- **JSON de palavras**: Pode ser obtido do endpoint `/transcribe` (campo `files.words.json`)
+- **Sistema de 2 layers**: Layer 0 (texto completo) + Layer 2 (palavra ativa com highlight)
+- **Cores em hexadecimal**: Enviadas como `#RRGGBB`, convertidas automaticamente para RGB pelo backend
+- **Opacidade**: Enviada como percentual 0-100%, convertida automaticamente para 0-255 (formato ASS)
+- **Word grouping configurável**: Use `words_per_line` e `max_lines` para controlar agrupamento
+  - Exemplo: `words_per_line: 3, max_lines: 2` = até 6 palavras por diálogo (3 por linha × 2 linhas)
+  - Exemplo: `words_per_line: 4, max_lines: 1` = até 4 palavras por diálogo (1 linha única)
+- **Texto sempre em UPPERCASE**: Renderizado automaticamente para melhor legibilidade
 
 ---
 

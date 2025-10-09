@@ -96,7 +96,7 @@ const highlightSchema = Joi.object({
 
     // Fundo (Background)
     fundo_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#000000'),
-    fundo_opacidade: Joi.number().min(0).max(255).default(128),
+    fundo_opacidade: Joi.number().min(0).max(100).default(50),  // 0-100% (convertido para 0-255)
     fundo_arredondado: Joi.boolean().default(true),
 
     // Texto (Text)
@@ -111,7 +111,11 @@ const highlightSchema = Joi.object({
     padding_vertical: Joi.number().min(0).max(500).default(80),
 
     // Position
-    position: Joi.string().valid(...Object.keys(POSITION_MAP)).default('bottom_center')
+    position: Joi.string().valid(...Object.keys(POSITION_MAP)).default('bottom_center'),
+
+    // Word grouping configuration
+    words_per_line: Joi.number().min(1).max(10).default(4),
+    max_lines: Joi.number().min(1).max(5).default(2)
   }).default()
 });
 
@@ -229,8 +233,12 @@ router.post('/caption_style/highlight', async (req: Request, res: Response) => {
     const textoRgb = hexToRgb(style.texto_cor);
     const highlightRgb = hexToRgb(style.highlight_cor);
 
+    // Convert opacity from 0-100% to 0-255
+    const opacidade255 = Math.round((style.fundo_opacidade / 100) * 255);
+
     console.log(`[CaptionHighlight] Processing: ${url_video}`);
-    console.log(`[CaptionHighlight] Style (hex): ${JSON.stringify(style)}`);
+    console.log(`[CaptionHighlight] Style (input): ${JSON.stringify(style)}`);
+    console.log(`[CaptionHighlight] Opacity conversion: ${style.fundo_opacidade}% → ${opacidade255}/255`);
 
     // Submit job to RunPod with caption_highlight operation
     const result = await getRunPodService().processVideo('caption_highlight' as any, {
@@ -241,7 +249,7 @@ router.post('/caption_style/highlight', async (req: Request, res: Response) => {
       style: {
         fonte: style.fonte,
         tamanho_fonte: style.tamanho_fonte,
-        fundo_opacidade: style.fundo_opacidade,
+        fundo_opacidade: opacidade255,  // Converted from percentage
         fundo_cor_r: fundoRgb.r,
         fundo_cor_g: fundoRgb.g,
         fundo_cor_b: fundoRgb.b,
@@ -255,6 +263,8 @@ router.post('/caption_style/highlight', async (req: Request, res: Response) => {
         highlight_borda: style.highlight_borda,
         padding_horizontal: style.padding_horizontal,
         padding_vertical: style.padding_vertical,
+        words_per_line: style.words_per_line,
+        max_lines: style.max_lines,
         alignment
       }
     });

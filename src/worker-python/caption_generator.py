@@ -247,15 +247,24 @@ def load_words_json(json_path: Path) -> List[Dict]:
     return data.get('words', [])
 
 
-def group_words_into_dialogues(words: List[Dict]) -> List[Dict]:
+def group_words_into_dialogues(
+    words: List[Dict],
+    words_per_line: int = 4,
+    max_lines: int = 2
+) -> List[Dict]:
     """
     Group words into multi-line dialogues
+
+    Args:
+        words: List of word dicts with 'word', 'start', 'end'
+        words_per_line: Maximum words per line (default: 4)
+        max_lines: Maximum lines per dialogue (default: 2)
 
     Returns:
         List of dicts with 'start', 'end', 'lines'
     """
-    WORDS_PER_LINE = 4
-    MAX_LINES = 2
+    WORDS_PER_LINE = words_per_line
+    MAX_LINES = max_lines
     MAX_DURATION_PER_LINE = 5.0
 
     dialogues = []
@@ -335,8 +344,14 @@ def generate_ass_highlight(
     if not words:
         raise ValueError("No words found in JSON file")
 
+    # Extract grouping configuration
+    words_per_line = style.get('words_per_line', 4)
+    max_lines = style.get('max_lines', 2)
+
+    logger.info(f"Grouping config: words_per_line={words_per_line}, max_lines={max_lines}")
+
     # Group into dialogues
-    dialogues = group_words_into_dialogues(words)
+    dialogues = group_words_into_dialogues(words, words_per_line, max_lines)
 
     # Extract style parameters
     font_name = style.get('fonte', 'Arial Black')
