@@ -736,17 +736,11 @@ curl -X POST https://your-api.com/caption_style/segments \
   "style": {
     "fonte": "Arial Black",
     "tamanho_fonte": 72,
+    "fundo_cor": "#000000",
     "fundo_opacidade": 128,
-    "fundo_cor_r": 0,
-    "fundo_cor_g": 0,
-    "fundo_cor_b": 0,
     "fundo_arredondado": true,
-    "texto_cor_r": 255,
-    "texto_cor_g": 255,
-    "texto_cor_b": 255,
-    "highlight_cor_r": 214,
-    "highlight_cor_g": 0,
-    "highlight_cor_b": 0,
+    "texto_cor": "#FFFFFF",
+    "highlight_cor": "#D60000",
     "highlight_borda": 12,
     "padding_horizontal": 40,
     "padding_vertical": 80,
@@ -775,17 +769,11 @@ curl -X POST https://your-api.com/caption_style/segments \
 | `output_filename` | string | ✅ | - | Nome do arquivo de saída |
 | `style.fonte` | string | ❌ | `"Arial Black"` | Nome da fonte |
 | `style.tamanho_fonte` | number | ❌ | `72` | Tamanho da fonte (20-200) |
+| `style.fundo_cor` | string (hex) | ❌ | `"#000000"` | Cor do fundo em hexadecimal |
 | `style.fundo_opacidade` | number | ❌ | `128` | Opacidade do fundo (0-255) |
-| `style.fundo_cor_r` | number | ❌ | `0` | Fundo: componente Red (0-255) |
-| `style.fundo_cor_g` | number | ❌ | `0` | Fundo: componente Green (0-255) |
-| `style.fundo_cor_b` | number | ❌ | `0` | Fundo: componente Blue (0-255) |
 | `style.fundo_arredondado` | boolean | ❌ | `true` | Fundo com cantos arredondados |
-| `style.texto_cor_r` | number | ❌ | `255` | Texto: componente Red (0-255) |
-| `style.texto_cor_g` | number | ❌ | `255` | Texto: componente Green (0-255) |
-| `style.texto_cor_b` | number | ❌ | `255` | Texto: componente Blue (0-255) |
-| `style.highlight_cor_r` | number | ❌ | `214` | Highlight: componente Red (0-255) |
-| `style.highlight_cor_g` | number | ❌ | `0` | Highlight: componente Green (0-255) |
-| `style.highlight_cor_b` | number | ❌ | `0` | Highlight: componente Blue (0-255) |
+| `style.texto_cor` | string (hex) | ❌ | `"#FFFFFF"` | Cor do texto em hexadecimal |
+| `style.highlight_cor` | string (hex) | ❌ | `"#D60000"` | Cor do highlight em hexadecimal |
 | `style.highlight_borda` | number | ❌ | `12` | Largura da borda do highlight (1-50) |
 | `style.padding_horizontal` | number | ❌ | `40` | Espaçamento horizontal (0-500) |
 | `style.padding_vertical` | number | ❌ | `80` | Espaçamento vertical (0-500) |
@@ -863,14 +851,11 @@ curl -X POST https://your-api.com/caption_style/highlight \
     "style": {
       "fonte": "Arial Black",
       "tamanho_fonte": 72,
-      "texto_cor_r": 255,
-      "texto_cor_g": 255,
-      "texto_cor_b": 255,
-      "highlight_cor_r": 0,
-      "highlight_cor_g": 255,
-      "highlight_cor_b": 0,
-      "highlight_borda": 15,
+      "fundo_cor": "#000000",
       "fundo_opacidade": 180,
+      "texto_cor": "#FFFFFF",
+      "highlight_cor": "#00FF00",
+      "highlight_borda": 15,
       "position": "bottom_center"
     }
   }'

@@ -34,6 +34,25 @@ const POSITION_MAP: Record<string, number> = {
 };
 
 // ============================================
+// Helper Functions
+// ============================================
+
+/**
+ * Convert hex color (#RRGGBB) to RGB components
+ */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) {
+    throw new Error(`Invalid hex color: ${hex}`);
+  }
+  return {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16)
+  };
+}
+
+// ============================================
 // Validation Schemas
 // ============================================
 
@@ -75,22 +94,16 @@ const highlightSchema = Joi.object({
     fonte: Joi.string().default('Arial Black'),
     tamanho_fonte: Joi.number().min(20).max(200).default(72),
 
-    // Fundo
+    // Fundo (Background)
+    fundo_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#000000'),
     fundo_opacidade: Joi.number().min(0).max(255).default(128),
-    fundo_cor_r: Joi.number().min(0).max(255).default(0),
-    fundo_cor_g: Joi.number().min(0).max(255).default(0),
-    fundo_cor_b: Joi.number().min(0).max(255).default(0),
     fundo_arredondado: Joi.boolean().default(true),
 
-    // Texto
-    texto_cor_r: Joi.number().min(0).max(255).default(255),
-    texto_cor_g: Joi.number().min(0).max(255).default(255),
-    texto_cor_b: Joi.number().min(0).max(255).default(255),
+    // Texto (Text)
+    texto_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#FFFFFF'),
 
     // Highlight
-    highlight_cor_r: Joi.number().min(0).max(255).default(214),
-    highlight_cor_g: Joi.number().min(0).max(255).default(0),
-    highlight_cor_b: Joi.number().min(0).max(255).default(0),
+    highlight_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#D60000'),
     highlight_borda: Joi.number().min(1).max(50).default(12),
 
     // Padding
@@ -211,8 +224,13 @@ router.post('/caption_style/highlight', async (req: Request, res: Response) => {
     // Map position string to alignment number
     const alignment = POSITION_MAP[style.position];
 
+    // Convert hex colors to RGB for worker
+    const fundoRgb = hexToRgb(style.fundo_cor);
+    const textoRgb = hexToRgb(style.texto_cor);
+    const highlightRgb = hexToRgb(style.highlight_cor);
+
     console.log(`[CaptionHighlight] Processing: ${url_video}`);
-    console.log(`[CaptionHighlight] Style: ${JSON.stringify(style)}`);
+    console.log(`[CaptionHighlight] Style (hex): ${JSON.stringify(style)}`);
 
     // Submit job to RunPod with caption_highlight operation
     const result = await getRunPodService().processVideo('caption_highlight' as any, {
@@ -221,8 +239,23 @@ router.post('/caption_style/highlight', async (req: Request, res: Response) => {
       path,
       output_filename,
       style: {
-        ...style,
-        alignment // Send numeric alignment
+        fonte: style.fonte,
+        tamanho_fonte: style.tamanho_fonte,
+        fundo_opacidade: style.fundo_opacidade,
+        fundo_cor_r: fundoRgb.r,
+        fundo_cor_g: fundoRgb.g,
+        fundo_cor_b: fundoRgb.b,
+        fundo_arredondado: style.fundo_arredondado,
+        texto_cor_r: textoRgb.r,
+        texto_cor_g: textoRgb.g,
+        texto_cor_b: textoRgb.b,
+        highlight_cor_r: highlightRgb.r,
+        highlight_cor_g: highlightRgb.g,
+        highlight_cor_b: highlightRgb.b,
+        highlight_borda: style.highlight_borda,
+        padding_horizontal: style.padding_horizontal,
+        padding_vertical: style.padding_vertical,
+        alignment
       }
     });
 
