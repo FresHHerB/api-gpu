@@ -58,8 +58,8 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 
 // Segments endpoint validation
 const segmentsSchema = Joi.object({
-  url_video: Joi.string().uri().required(),
-  url_srt: Joi.string().uri().required(),
+  url_video: Joi.string().required(),
+  url_srt: Joi.string().required(),
   path: Joi.string().required(),
   output_filename: Joi.string().required(),
   style: Joi.object({
@@ -85,8 +85,8 @@ const segmentsSchema = Joi.object({
 
 // Highlight endpoint validation
 const highlightSchema = Joi.object({
-  url_video: Joi.string().uri().required(),
-  url_words_json: Joi.string().uri().required(),
+  url_video: Joi.string().required(),
+  url_words_json: Joi.string().required(),
   path: Joi.string().required(),
   output_filename: Joi.string().required(),
   style: Joi.object({
