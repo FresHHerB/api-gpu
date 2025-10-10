@@ -81,6 +81,18 @@ def check_gpu_available() -> bool:
 # Global GPU availability flag (checked once at startup)
 GPU_AVAILABLE = check_gpu_available()
 
+
+def normalize_url(url: str) -> str:
+    """
+    Normalize URL to handle UTF-8 characters correctly
+    Uses requote_uri to ensure proper percent-encoding
+    """
+    if not url:
+        return url
+    from requests.utils import requote_uri
+    return requote_uri(url)
+
+
 # HTTP Server for serving videos (caption/addaudio only)
 class VideoHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -175,8 +187,14 @@ def download_file(url: str, output_path: Path) -> None:
         # This handles:
         # 1. Non-S3 URLs (regular HTTP/HTTPS)
         # 2. S3 URLs from different endpoints (e.g., minio.automear.com when configured for n8n-minio)
-        logger.info(f"🌐 HTTP download: {url}")
-        response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
+
+        # Properly encode URL to handle UTF-8 characters (â, ó, etc.)
+        # Use requote_uri to ensure correct percent-encoding
+        from requests.utils import requote_uri
+        encoded_url = requote_uri(url)
+
+        logger.info(f"🌐 HTTP download: {encoded_url}")
+        response = requests.get(encoded_url, stream=True, timeout=300, allow_redirects=True)
         response.raise_for_status()
 
         with open(output_path, 'wb') as f:
@@ -877,8 +895,8 @@ def handler(job: Dict) -> Dict[str, Any]:
 
     try:
         if operation == 'caption':
-            url_video = job_input.get('url_video')
-            url_srt = job_input.get('url_srt')
+            url_video = normalize_url(job_input.get('url_video'))
+            url_srt = normalize_url(job_input.get('url_srt'))
             path = job_input.get('path')
             output_filename = job_input.get('output_filename')
             force_style = job_input.get('force_style')  # Optional custom styling
@@ -911,6 +929,11 @@ def handler(job: Dict) -> Dict[str, Any]:
             if not images or not path:
                 raise ValueError("Missing required fields: images, path")
 
+            # Normalize all image URLs
+            for img in images:
+                if 'image_url' in img:
+                    img['image_url'] = normalize_url(img['image_url'])
+
             logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, start_index={start_index}")
             result = process_img2vid_batch(images, frame_rate, worker_id, path, start_index)
 
@@ -920,8 +943,8 @@ def handler(job: Dict) -> Dict[str, Any]:
             }
 
         elif operation == 'addaudio':
-            url_video = job_input.get('url_video')
-            url_audio = job_input.get('url_audio')
+            url_video = normalize_url(job_input.get('url_video'))
+            url_audio = normalize_url(job_input.get('url_audio'))
             path = job_input.get('path')
             output_filename = job_input.get('output_filename')
 
@@ -940,8 +963,8 @@ def handler(job: Dict) -> Dict[str, Any]:
             }
 
         elif operation == 'caption_segments':
-            url_video = job_input.get('url_video')
-            url_srt = job_input.get('url_srt')
+            url_video = normalize_url(job_input.get('url_video'))
+            url_srt = normalize_url(job_input.get('url_srt'))
             path = job_input.get('path')
             output_filename = job_input.get('output_filename')
             style = job_input.get('style', {})
@@ -962,8 +985,8 @@ def handler(job: Dict) -> Dict[str, Any]:
             }
 
         elif operation == 'caption_highlight':
-            url_video = job_input.get('url_video')
-            url_words_json = job_input.get('url_words_json')
+            url_video = normalize_url(job_input.get('url_video'))
+            url_words_json = normalize_url(job_input.get('url_words_json'))
             path = job_input.get('path')
             output_filename = job_input.get('output_filename')
             style = job_input.get('style', {})
