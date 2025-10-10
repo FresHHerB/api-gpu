@@ -341,7 +341,10 @@ export class RunPodService {
   async checkHealth(): Promise<boolean> {
     try {
       const response = await this.client.get(`/${this.endpointId}/health`);
-      return response.data.status === 'running';
+      // RunPod health response: {workers: {ready: N, ...}, jobs: {...}}
+      // Endpoint is healthy if we have workers ready
+      const ready = response.data?.workers?.ready || 0;
+      return ready > 0;
     } catch (error) {
       logger.error('RunPod health check failed', {
         error: error instanceof Error ? error.message : 'Unknown error'
