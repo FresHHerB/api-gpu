@@ -36,8 +36,8 @@ OUTPUT_DIR = Path(os.getenv('OUTPUT_DIR', '/tmp/output'))
 BATCH_SIZE = int(os.getenv('BATCH_SIZE', '5'))  # Optimized for RTX A4500 (12 vCPU)
 HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
-# S3/MinIO Configuration
-S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL', 'https://n8n-minio.gpqg9h.easypanel.host')
+# S3/MinIO Configuration (from environment or job input)
+S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL', 'https://minio.automear.com')
 S3_ACCESS_KEY = os.getenv('S3_ACCESS_KEY', 'admin')
 S3_SECRET_KEY = os.getenv('S3_SECRET_KEY', 'password')
 S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'canais')
@@ -47,7 +47,7 @@ S3_REGION = os.getenv('S3_REGION', 'us-east-1')
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Initialize S3 client
+# Initialize S3 client (will be reconfigured if job provides s3_config)
 s3_client = boto3.client(
     's3',
     endpoint_url=S3_ENDPOINT_URL,
@@ -56,6 +56,31 @@ s3_client = boto3.client(
     region_name=S3_REGION,
     config=boto3.session.Config(signature_version='s3v4')
 )
+
+
+def reconfigure_s3(s3_config: Dict[str, str]) -> None:
+    """
+    Reconfigure S3 client with job-specific credentials
+    Allows orchestrator to pass dynamic S3 credentials per job
+    """
+    global s3_client, S3_ENDPOINT_URL, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME, S3_REGION
+
+    S3_ENDPOINT_URL = s3_config.get('endpoint_url', S3_ENDPOINT_URL)
+    S3_ACCESS_KEY = s3_config.get('access_key', S3_ACCESS_KEY)
+    S3_SECRET_KEY = s3_config.get('secret_key', S3_SECRET_KEY)
+    S3_BUCKET_NAME = s3_config.get('bucket_name', S3_BUCKET_NAME)
+    S3_REGION = s3_config.get('region', S3_REGION)
+
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=S3_ENDPOINT_URL,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        region_name=S3_REGION,
+        config=boto3.session.Config(signature_version='s3v4')
+    )
+
+    logger.info(f"🔧 S3 client reconfigured: endpoint={S3_ENDPOINT_URL}, bucket={S3_BUCKET_NAME}")
 
 # GPU Detection
 def check_gpu_available() -> bool:
@@ -892,6 +917,12 @@ def handler(job: Dict) -> Dict[str, Any]:
     logger.info(f"🚀 Job started: {operation}")
     logger.info(f"📥 Input: {job_input}")
     logger.info(f"🆔 Worker ID: {worker_id}")
+
+    # Reconfigure S3 client if job provides s3_config
+    s3_config = job_input.get('s3_config')
+    if s3_config:
+        logger.info("🔧 Reconfiguring S3 client with job-specific credentials")
+        reconfigure_s3(s3_config)
 
     try:
         if operation == 'caption':
