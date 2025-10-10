@@ -191,10 +191,33 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
       return;
     }
 
+    // Validate zoom_types if provided
+    if (data.zoom_types) {
+      if (!Array.isArray(data.zoom_types) || data.zoom_types.length === 0) {
+        res.status(400).json({
+          error: 'Bad Request',
+          message: 'zoom_types must be a non-empty array'
+        });
+        return;
+      }
+
+      const validZoomTypes = ['zoomin', 'zoomout', 'zoompanright', 'zoompanleft'];
+      for (const zoomType of data.zoom_types) {
+        if (!validZoomTypes.includes(zoomType)) {
+          res.status(400).json({
+            error: 'Bad Request',
+            message: `Invalid zoom_type: ${zoomType}. Valid types: ${validZoomTypes.join(', ')}`
+          });
+          return;
+        }
+      }
+    }
+
     logger.info('🖼️ Img2Vid batch request received', {
       imageCount: data.images.length,
       images: data.images.map(i => ({ id: i.id, duracao: i.duracao })),
       path: data.path,
+      zoom_types: data.zoom_types || ['zoomin'],
       ip: req.ip
     });
 
@@ -405,6 +428,7 @@ router.post('/video/img2vid/async', authenticateApiKey, async (req: Request, res
       imageCount: data.images.length,
       images: data.images.map(i => ({ id: i.id, duracao: i.duracao })),
       path: data.path,
+      zoom_types: data.zoom_types || ['zoomin'],
       ip: req.ip
     });
 

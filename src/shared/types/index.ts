@@ -20,9 +20,12 @@ export interface Img2VidImage {
   duracao: number; // duração em segundos
 }
 
+export type ZoomType = 'zoomin' | 'zoomout' | 'zoompanright' | 'zoompanleft';
+
 export interface Img2VidRequest {
   images: Img2VidImage[];
   path: string; // S3 path including /videos/temp/ (e.g., "Sleepless Historian/Video Title/videos/temp/")
+  zoom_types?: ZoomType[]; // Optional: zoom types to distribute proportionally (default: ['zoomin'])
   // frame_rate is fixed at 24fps
   // output filenames are auto-generated: video_1.mp4, video_2.mp4, etc.
   // bucket is read from S3_BUCKET_NAME env var

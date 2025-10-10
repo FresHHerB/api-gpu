@@ -19,6 +19,7 @@ from typing import Dict, List, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import threading
+import random
 
 # Import caption generator
 from caption_generator import generate_ass_from_srt, generate_ass_highlight
@@ -359,12 +360,17 @@ def image_to_video(
     image_url: str,
     duracao: float,
     frame_rate: int = 24,
+    zoom_type: str = "zoomin",
     worker_id: str = None,
     path: str = None,
     video_index: int = None
 ) -> Dict[str, Any]:
-    """Convert image to video with zoom effect and upload to S3"""
-    logger.info(f"Converting image to video with zoom: {image_id}, duration: {duracao}s, fps: {frame_rate}")
+    """Convert image to video with various zoom effects and upload to S3
+
+    Args:
+        zoom_type: Type of zoom effect - "zoomin", "zoomout", "zoompanright", "zoompanleft"
+    """
+    logger.info(f"Converting image to video: {image_id}, duration: {duracao}s, fps: {frame_rate}, zoom: {zoom_type}")
 
     image_path = WORK_DIR / f"{image_id}_image.jpg"
 
@@ -380,22 +386,56 @@ def image_to_video(
         # Download image
         download_file(image_url, image_path)
 
-        # Zoom parameters (1.0 -> 1.324 = 32.4% zoom)
+        # Zoom parameters
         total_frames = int(frame_rate * duracao)
-        zoom_start = 1.0
-        zoom_end = 1.324
-        zoom_diff = zoom_end - zoom_start
         upscale_factor = 6
         upscale_width = 1920 * upscale_factor  # 11520
         upscale_height = 1080 * upscale_factor  # 6480
 
+        # Define zoom effect based on type
+        if zoom_type == "zoomout":
+            # ZOOM OUT: Starts zoomed in, ends normal
+            zoom_start = 1.324
+            zoom_end = 1.0
+            zoom_diff = zoom_start - zoom_end
+            zoom_formula = f"max({zoom_start}-{zoom_diff}*on/{total_frames},{zoom_end})"
+            x_formula = "trunc(iw/2-(iw/zoom/2))"
+            y_formula = "trunc(ih/2-(ih/zoom/2))"
+
+        elif zoom_type == "zoompanright":
+            # ZOOM IN + PAN RIGHT: Zoom in while panning from left to right
+            zoom_start = 1.0
+            zoom_end = 1.324
+            zoom_diff = zoom_end - zoom_start
+            zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
+            x_formula = f"on/{total_frames}*(iw-iw/zoom)"
+            y_formula = "trunc(ih/2-(ih/zoom/2))"
+
+        elif zoom_type == "zoompanleft":
+            # ZOOM IN + PAN LEFT: Zoom in while panning from right to left
+            zoom_start = 1.0
+            zoom_end = 1.324
+            zoom_diff = zoom_end - zoom_start
+            zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
+            x_formula = f"(iw-iw/zoom)*(1-on/{total_frames})"
+            y_formula = "trunc(ih/2-(ih/zoom/2))"
+
+        else:  # "zoomin" (default)
+            # ZOOM IN: Starts normal, ends zoomed in
+            zoom_start = 1.0
+            zoom_end = 1.324
+            zoom_diff = zoom_end - zoom_start
+            zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
+            x_formula = "trunc(iw/2-(iw/zoom/2))"
+            y_formula = "trunc(ih/2-(ih/zoom/2))"
+
         # Video filter with zoom effect
         video_filter = (
             f"scale={upscale_width}:{upscale_height}:flags=lanczos,"
-            f"zoompan=z='min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})'"
+            f"zoompan=z='{zoom_formula}'"
             f":d={total_frames}"
-            f":x='trunc(iw/2-(iw/zoom/2))'"
-            f":y='trunc(ih/2-(ih/zoom/2))'"
+            f":x='{x_formula}'"
+            f":y='{y_formula}'"
             f":s=1920x1080"
             f":fps={frame_rate},"
             f"format=nv12"
@@ -483,9 +523,51 @@ def image_to_video(
         image_path.unlink(missing_ok=True)
 
 
+def distribute_zoom_types(zoom_types: List[str], image_count: int) -> List[str]:
+    """
+    Distribute zoom types proportionally and randomly across images
+
+    Args:
+        zoom_types: List of zoom types to distribute (e.g., ["zoomin", "zoomout", "zoompanright"])
+        image_count: Total number of images
+
+    Returns:
+        List of zoom types, one per image, distributed proportionally and shuffled
+
+    Example:
+        distribute_zoom_types(["zoomin", "zoomout"], 10)
+        -> ["zoomin", "zoomout", "zoomin", "zoomout", ...] (shuffled)
+
+        distribute_zoom_types(["zoomin", "zoomout", "zoompanright"], 10)
+        -> 3-4 zoomin, 3-4 zoomout, 3-4 zoompanright (shuffled)
+    """
+    if not zoom_types or image_count == 0:
+        return ["zoomin"] * image_count  # Default fallback
+
+    # Calculate proportional distribution
+    types_count = len(zoom_types)
+    base_count = image_count // types_count  # Base count per type
+    remainder = image_count % types_count    # Extra images to distribute
+
+    # Build distribution list
+    distribution = []
+    for i, zoom_type in enumerate(zoom_types):
+        # Each type gets base_count + 1 extra if remainder available
+        count = base_count + (1 if i < remainder else 0)
+        distribution.extend([zoom_type] * count)
+
+    # Shuffle to randomize order (proportional but random)
+    random.shuffle(distribution)
+
+    logger.info(f"📊 Zoom distribution: {dict(zip(*[distribution, [distribution.count(t) for t in set(distribution)]]))} for {image_count} images")
+
+    return distribution
+
+
 def process_img2vid_batch(
     images: List[Dict],
     frame_rate: int = 24,
+    zoom_types: List[str] = None,
     worker_id: str = None,
     path: str = None,
     start_index: int = 0
@@ -495,6 +577,7 @@ def process_img2vid_batch(
     Args:
         images: List of image dictionaries
         frame_rate: Video frame rate (default: 24)
+        zoom_types: List of zoom types to distribute (e.g., ["zoomin", "zoomout"])
         worker_id: Worker identifier
         path: S3 path for uploads
         start_index: Global start index for multi-worker scenarios (default: 0)
@@ -504,6 +587,14 @@ def process_img2vid_batch(
 
     if path:
         logger.info(f"📤 S3 upload enabled: bucket={S3_BUCKET_NAME}, path={path}")
+
+    # Distribute zoom types proportionally and randomly
+    if zoom_types and len(zoom_types) > 0:
+        zoom_distribution = distribute_zoom_types(zoom_types, total)
+        logger.info(f"🎬 Zoom types: {zoom_types} → distributed across {total} images")
+    else:
+        zoom_distribution = ["zoomin"] * total  # Default
+        logger.info(f"🎬 Using default zoom: zoomin for all {total} images")
 
     results = []
 
@@ -525,6 +616,7 @@ def process_img2vid_batch(
                     img['image_url'],
                     img['duracao'],
                     frame_rate,
+                    zoom_distribution[i + j],  # Assign zoom type from distribution
                     worker_id,
                     path,
                     start_index + i + j + 1  # video_index with global offset
@@ -955,6 +1047,7 @@ def handler(job: Dict) -> Dict[str, Any]:
             images = job_input.get('images', [])
             frame_rate = job_input.get('frame_rate', 24)  # Default 24 fps
             path = job_input.get('path')
+            zoom_types = job_input.get('zoom_types', ['zoomin'])  # Default: zoomin only
             start_index = job_input.get('start_index', 0)  # Global start index for multi-worker
 
             if not images or not path:
@@ -965,8 +1058,8 @@ def handler(job: Dict) -> Dict[str, Any]:
                 if 'image_url' in img:
                     img['image_url'] = normalize_url(img['image_url'])
 
-            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, start_index={start_index}")
-            result = process_img2vid_batch(images, frame_rate, worker_id, path, start_index)
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, zoom_types={zoom_types}, start_index={start_index}")
+            result = process_img2vid_batch(images, frame_rate, zoom_types, worker_id, path, start_index)
 
             return {
                 "success": True,
