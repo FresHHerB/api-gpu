@@ -142,22 +142,26 @@ def download_file(url: str, output_path: Path) -> None:
     logger.info(f"Downloading {url} to {output_path}")
 
     try:
-        # Parse S3 URL and use boto3 for S3/MinIO (faster, optimized)
-        # Expected formats:
-        # - http://minio.automear.com/canais/path/file.mp4
-        # - https://minio.automear.com/canais/path/file.mp4
-        if 'minio.automear.com' in url or S3_BUCKET_NAME in url:
-            # Extract bucket and key from URL
-            # Format: http://minio.automear.com/{bucket}/{key}
-            from urllib.parse import urlparse, unquote
-            parsed = urlparse(url)
-            path_parts = parsed.path.lstrip('/').split('/', 1)
+        from urllib.parse import urlparse, unquote
+
+        # Check if URL matches configured S3 endpoint
+        # Only use boto3 S3 if the host matches S3_ENDPOINT_URL
+        parsed_url = urlparse(url)
+        parsed_s3_endpoint = urlparse(S3_ENDPOINT_URL)
+
+        # Compare hosts (e.g., minio.automear.com vs n8n-minio.gpqg9h.easypanel.host)
+        url_host = parsed_url.netloc.lower()
+        s3_host = parsed_s3_endpoint.netloc.lower()
+
+        if url_host == s3_host:
+            # URL matches configured S3 endpoint - use boto3 for optimized download
+            path_parts = parsed_url.path.lstrip('/').split('/', 1)
 
             if len(path_parts) == 2:
                 bucket = path_parts[0]
                 key = unquote(path_parts[1])  # Decode URL encoding
 
-                logger.info(f"📥 S3 download: bucket={bucket}, key={key}")
+                logger.info(f"📥 S3 download (boto3): bucket={bucket}, key={key}")
                 s3_client.download_file(bucket, key, str(output_path))
 
                 file_size = output_path.stat().st_size
@@ -167,7 +171,10 @@ def download_file(url: str, output_path: Path) -> None:
                     raise ValueError(f"Downloaded file is empty: {url}")
                 return
 
-        # Fallback: Standard HTTP download for non-S3 URLs
+        # Fallback: Standard HTTP download for all other URLs
+        # This handles:
+        # 1. Non-S3 URLs (regular HTTP/HTTPS)
+        # 2. S3 URLs from different endpoints (e.g., minio.automear.com when configured for n8n-minio)
         logger.info(f"🌐 HTTP download: {url}")
         response = requests.get(url, stream=True, timeout=300, allow_redirects=True)
         response.raise_for_status()
