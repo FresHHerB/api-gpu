@@ -201,7 +201,7 @@ router.post('/video/img2vid', authenticateApiKey, async (req: Request, res: Resp
         return;
       }
 
-      const validZoomTypes = ['zoomin', 'zoomout', 'zoompanright', 'zoompanleft'];
+      const validZoomTypes = ['zoomin', 'zoomout', 'zoompanright'];
       for (const zoomType of data.zoom_types) {
         if (!validZoomTypes.includes(zoomType)) {
           res.status(400).json({

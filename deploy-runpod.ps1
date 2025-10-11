@@ -1,15 +1,15 @@
 # ============================================
-# RunPod Deployment Script - v2.5.0 (PowerShell)
-# Multi-Zoom Support: zoomin, zoomout, zoompanright, zoompanleft
+# RunPod Deployment Script - v2.10.0 (PowerShell)
+# Multi-Zoom Support: zoomin, zoomout, zoompanright
 # ============================================
 
-Write-Host "🚀 RunPod Deployment - v2.5.0 Multi-Zoom Support" -ForegroundColor Cyan
+Write-Host "🚀 RunPod Deployment - v2.10.0 Multi-Zoom Support" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
 
 # Configuration
 $DOCKER_IMAGE = "oreiasccp/api-gpu-worker"
-$VERSION = "v2.5.0"
+$VERSION = "v2.10.0"
 $RUNPOD_API_KEY = $env:RUNPOD_API_KEY
 if (-not $RUNPOD_API_KEY) {
     $RUNPOD_API_KEY = (Get-Content .env | Select-String "RUNPOD_API_KEY=").ToString().Split('=')[1]
@@ -38,7 +38,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "📝 Step 3: Creating RunPod template..." -ForegroundColor Blue
 
 $templateBody = @{
-    query = "mutation { saveTemplate(input: { name: \`"api-gpu-worker-v2.5\`", imageName: \`"$DOCKER_IMAGE`:$VERSION\`", dockerArgs: \`"python -u rp_handler.py\`", containerDiskInGb: 10, volumeInGb: 0, isServerless: true, env: [{key: \`"WORK_DIR\`", value: \`"/tmp/work\`"}, {key: \`"OUTPUT_DIR\`", value: \`"/tmp/output\`"}, {key: \`"BATCH_SIZE\`", value: \`"3\`"}] }) { id name imageName } }"
+    query = "mutation { saveTemplate(input: { name: \`"api-gpu-worker-v2.10\`", imageName: \`"$DOCKER_IMAGE`:$VERSION\`", dockerArgs: \`"python -u rp_handler.py\`", containerDiskInGb: 10, volumeInGb: 0, isServerless: true, env: [{key: \`"WORK_DIR\`", value: \`"/tmp/work\`"}, {key: \`"OUTPUT_DIR\`", value: \`"/tmp/output\`"}, {key: \`"BATCH_SIZE\`", value: \`"3\`"}] }) { id name imageName } }"
 } | ConvertTo-Json
 
 $templateResponse = Invoke-RestMethod -Uri "https://api.runpod.io/graphql" `
@@ -110,7 +110,7 @@ Write-Host @'
     {"id": "img-3", "image_url": "https://example.com/photo3.jpg", "duracao": 3.42}
   ],
   "path": "Project/videos/temp/",
-  "zoom_types": ["zoomin", "zoomout", "zoompanright", "zoompanleft"]
+  "zoom_types": ["zoomin", "zoomout", "zoompanright"]
 }
 '@ -ForegroundColor Gray
 Write-Host ""

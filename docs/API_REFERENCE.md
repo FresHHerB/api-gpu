@@ -295,7 +295,7 @@ curl -X POST https://your-api.com/caption_style \
 
 ### POST /video/img2vid
 
-Converte imagens em vídeos com efeito Ken Burns.
+Converte imagens em vídeos com efeito Ken Burns e suporte a múltiplos tipos de zoom.
 
 **Request:**
 ```json
@@ -312,7 +312,8 @@ Converte imagens em vídeos com efeito Ken Burns.
       "duracao": 5.0
     }
   ],
-  "path": "Project/videos/temp/"
+  "path": "Project/videos/temp/",
+  "zoom_types": ["zoomin", "zoomout", "zoompanright"]
 }
 ```
 
@@ -322,6 +323,9 @@ Converte imagens em vídeos com efeito Ken Burns.
   - `image_url` (string, required): URL da imagem (JPG/PNG)
   - `duracao` (number, required): Duração em segundos
 - `path` (string, required): Prefixo S3
+- `zoom_types` (array, optional): Tipos de zoom a distribuir (padrão: `["zoomin"]`)
+  - Valores válidos: `"zoomin"`, `"zoomout"`, `"zoompanright"`
+  - Efeitos são distribuídos proporcionalmente e aleatoriamente
 
 **Response (200):**
 ```json
@@ -350,10 +354,15 @@ Converte imagens em vídeos com efeito Ken Burns.
 ```
 
 **Features:**
-- Ken Burns effect: Zoom 1.0 → 1.324 (32.4%)
-- Upscale: 6720x3840 (6x) para qualidade superior
+- Ken Burns effect: Zoom 1.0 → 1.25 (25%)
+- Tipos de zoom disponíveis:
+  - `zoomin`: Começa normal e termina com zoom (centralizado)
+  - `zoomout`: Começa com zoom e termina normal (centralizado)
+  - `zoompanright`: Zoom in + movimento da esquerda para direita
+- Upscale: 19200x10800 (10x) para movimento suave sem jitter
 - Output: 1920x1080 @ 24fps
 - Codec: h264_nvenc preset p4, CQ 23 VBR
+- Distribuição proporcional: Se você passar `["zoomin", "zoomout"]` com 10 imagens, 5 terão zoomin e 5 terão zoomout (aleatorizados)
 
 ---
 
@@ -488,6 +497,7 @@ interface HighlightStyle {
 interface Img2VidRequest {
   images: Array<{ id: string; image_url: string; duracao: number }>;
   path: string;
+  zoom_types?: Array<'zoomin' | 'zoomout' | 'zoompanright'>;
 }
 
 interface AddAudioRequest {

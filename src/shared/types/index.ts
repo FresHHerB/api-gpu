@@ -20,7 +20,7 @@ export interface Img2VidImage {
   duracao: number; // duração em segundos
 }
 
-export type ZoomType = 'zoomin' | 'zoomout' | 'zoompanright' | 'zoompanleft';
+export type ZoomType = 'zoomin' | 'zoomout' | 'zoompanright';
 
 export interface Img2VidRequest {
   images: Img2VidImage[];

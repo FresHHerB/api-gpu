@@ -368,7 +368,7 @@ def image_to_video(
     """Convert image to video with various zoom effects and upload to S3
 
     Args:
-        zoom_type: Type of zoom effect - "zoomin", "zoomout", "zoompanright", "zoompanleft"
+        zoom_type: Type of zoom effect - "zoomin", "zoomout", "zoompanright"
     """
     logger.info(f"Converting image to video: {image_id}, duration: {duracao}s, fps: {frame_rate}, zoom: {zoom_type}")
 
@@ -407,35 +407,22 @@ def image_to_video(
             y_formula = "ih/2-(ih/zoom/2)"
 
         elif zoom_type == "zoompanright":
-            # ZOOM IN + PAN RIGHT: Corrected formula considering dynamic zoom
-            # Key: Use (iw-iw/zoom)*on/d to account for changing window size
+            # ZOOM IN + PAN RIGHT
+            # Inicia no canto esquerdo (x=0), termina no canto direito (x=x_max)
             zoom_start = 1.0
             zoom_end = 1.25  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
 
-            # CORRECTED pan formula: (iw - iw/zoom) considers dynamic window size
-            # Window width = iw/zoom (changes from 1920 to 1536 as zoom goes 1.0→1.25)
-            # x_max = iw - iw/zoom (always keeps right edge at image border)
-            # Pan from LEFT (x=0) to RIGHT (x=x_max), compensating for zoom
-            x_formula = f"(iw-iw/zoom)*on/{total_frames}"
-            y_formula = "(ih-1080)/2"  # Center vertically (fixed)
+            # Pan da esquerda para direita
+            # x: 0 → (iw - ow/zoom)
+            # Movimento linear: progresso × distância_máxima
+            # IMPORTANTE: (iw-ow/zoom) é dinâmico, aumenta conforme zoom aumenta
+            # Isso funciona porque começamos em 0 (fixo) e vamos para x_max (dinâmico crescente)
+            x_formula = f"(iw-ow/zoom)*on/{total_frames}"
 
-        elif zoom_type == "zoompanleft":
-            # ZOOM IN + PAN LEFT: Corrected formula considering dynamic zoom
-            # Key: Use (iw-iw/zoom)*(d-on)/d to account for changing window size
-            zoom_start = 1.0
-            zoom_end = 1.25  # Slower zoom for smoother effect
-            zoom_diff = zoom_end - zoom_start
-            zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
-
-            # CORRECTED pan formula: (iw - iw/zoom) considers dynamic window size
-            # Window width = iw/zoom (changes from 1920 to 1536 as zoom goes 1.0→1.25)
-            # x_max = iw - iw/zoom (always keeps right edge at image border)
-            # Pan from RIGHT (x=x_max) to LEFT (x=0), compensating for zoom
-            # This eliminates the "initial zoom to right" artifact
-            x_formula = f"(iw-iw/zoom)*({total_frames}-on)/{total_frames}"
-            y_formula = "(ih-1080)/2"  # Center vertically (fixed)
+            # Centralizado verticalmente (mesma fórmula do zoomin/zoomout que funciona sem jitter)
+            y_formula = "ih/2-(ih/zoom/2)"
 
         else:  # "zoomin" (default)
             # ZOOM IN: Starts normal, ends zoomed in
