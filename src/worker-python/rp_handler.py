@@ -386,21 +386,24 @@ def image_to_video(
         # Download image
         download_file(image_url, image_path)
 
-        # Zoom parameters
+        # Zoom parameters - Anti-jitter optimizations
         total_frames = int(frame_rate * duracao)
-        upscale_factor = 6
-        upscale_width = 1920 * upscale_factor  # 11520
-        upscale_height = 1080 * upscale_factor  # 6480
+        upscale_factor = 8  # Increased from 6 to 8 for smoother motion
+        upscale_width = 1920 * upscale_factor  # 15360
+        upscale_height = 1080 * upscale_factor  # 8640
 
         # Define zoom effect based on type
+        # CRITICAL: NO trunc() - causes jitter due to rounding
+        # Use continuous float values for smooth sub-pixel motion
         if zoom_type == "zoomout":
             # ZOOM OUT: Starts zoomed in, ends normal
             zoom_start = 1.324
             zoom_end = 1.0
             zoom_diff = zoom_start - zoom_end
             zoom_formula = f"max({zoom_start}-{zoom_diff}*on/{total_frames},{zoom_end})"
-            x_formula = "trunc(iw/2-(iw/zoom/2))"
-            y_formula = "trunc(ih/2-(ih/zoom/2))"
+            # Centered - no trunc() for smooth motion
+            x_formula = "iw/2-(iw/zoom/2)"
+            y_formula = "ih/2-(ih/zoom/2)"
 
         elif zoom_type == "zoompanright":
             # ZOOM IN + PAN RIGHT: Zoom in while panning from left to right
@@ -408,8 +411,9 @@ def image_to_video(
             zoom_end = 1.324
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
+            # Pan from left (0) to right (max) - smooth continuous motion
             x_formula = f"on/{total_frames}*(iw-iw/zoom)"
-            y_formula = "trunc(ih/2-(ih/zoom/2))"
+            y_formula = "ih/2-(ih/zoom/2)"
 
         elif zoom_type == "zoompanleft":
             # ZOOM IN + PAN LEFT: Zoom in while panning from right to left
@@ -417,8 +421,9 @@ def image_to_video(
             zoom_end = 1.324
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
+            # Pan from right (max) to left (0) - smooth continuous motion
             x_formula = f"(iw-iw/zoom)*(1-on/{total_frames})"
-            y_formula = "trunc(ih/2-(ih/zoom/2))"
+            y_formula = "ih/2-(ih/zoom/2)"
 
         else:  # "zoomin" (default)
             # ZOOM IN: Starts normal, ends zoomed in
@@ -426,10 +431,11 @@ def image_to_video(
             zoom_end = 1.324
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
-            x_formula = "trunc(iw/2-(iw/zoom/2))"
-            y_formula = "trunc(ih/2-(ih/zoom/2))"
+            # Centered - no trunc() for smooth motion
+            x_formula = "iw/2-(iw/zoom/2)"
+            y_formula = "ih/2-(ih/zoom/2)"
 
-        # Video filter with zoom effect
+        # Video filter with zoom effect - Bicubic downscaling for best quality
         video_filter = (
             f"scale={upscale_width}:{upscale_height}:flags=lanczos,"
             f"zoompan=z='{zoom_formula}'"
@@ -438,6 +444,7 @@ def image_to_video(
             f":y='{y_formula}'"
             f":s=1920x1080"
             f":fps={frame_rate},"
+            f"scale=1920:1080:flags=bicubic,"  # Final downscale with bicubic for smoothness
             f"format=nv12"
         )
 
