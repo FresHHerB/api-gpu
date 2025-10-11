@@ -407,32 +407,34 @@ def image_to_video(
             y_formula = "ih/2-(ih/zoom/2)"
 
         elif zoom_type == "zoompanright":
-            # ZOOM IN + PAN RIGHT: Professional formula from FFmpeg study
-            # Key: Use (iw-ow)*on/d formula for perfect linear pan
+            # ZOOM IN + PAN RIGHT: Corrected formula considering dynamic zoom
+            # Key: Use (iw-iw/zoom)*on/d to account for changing window size
             zoom_start = 1.0
             zoom_end = 1.25  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
 
-            # Professional pan formula: (iw-ow)*on/d
-            # iw = input width (19200), ow = output width (1920)
-            # Pan from LEFT (x=0) to RIGHT (x=max)
-            # Using 'd' variable from zoompan (duration in frames)
-            x_formula = f"(iw-1920)*on/{total_frames}"
+            # CORRECTED pan formula: (iw - iw/zoom) considers dynamic window size
+            # Window width = iw/zoom (changes from 1920 to 1536 as zoom goes 1.0→1.25)
+            # x_max = iw - iw/zoom (always keeps right edge at image border)
+            # Pan from LEFT (x=0) to RIGHT (x=x_max), compensating for zoom
+            x_formula = f"(iw-iw/zoom)*on/{total_frames}"
             y_formula = "(ih-1080)/2"  # Center vertically (fixed)
 
         elif zoom_type == "zoompanleft":
-            # ZOOM IN + PAN LEFT: Professional formula from FFmpeg study
-            # Key: Use (iw-ow)*(d-on)/d for reverse pan
+            # ZOOM IN + PAN LEFT: Corrected formula considering dynamic zoom
+            # Key: Use (iw-iw/zoom)*(d-on)/d to account for changing window size
             zoom_start = 1.0
             zoom_end = 1.25  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
 
-            # Professional pan formula: (iw-ow)*(d-on)/d
-            # Pan from RIGHT (x=max) to LEFT (x=0)
-            # Using 'd' variable from zoompan
-            x_formula = f"(iw-1920)*({total_frames}-on)/{total_frames}"
+            # CORRECTED pan formula: (iw - iw/zoom) considers dynamic window size
+            # Window width = iw/zoom (changes from 1920 to 1536 as zoom goes 1.0→1.25)
+            # x_max = iw - iw/zoom (always keeps right edge at image border)
+            # Pan from RIGHT (x=x_max) to LEFT (x=0), compensating for zoom
+            # This eliminates the "initial zoom to right" artifact
+            x_formula = f"(iw-iw/zoom)*({total_frames}-on)/{total_frames}"
             y_formula = "(ih-1080)/2"  # Center vertically (fixed)
 
         else:  # "zoomin" (default)
