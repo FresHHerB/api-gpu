@@ -386,18 +386,19 @@ def image_to_video(
         # Download image
         download_file(image_url, image_path)
 
-        # Zoom parameters - Anti-jitter optimizations
+        # Zoom parameters - Professional anti-jitter based on FFmpeg best practices
+        # Study reference: High upscale (10x+) + correct pan formulas = jitter-free
         total_frames = int(frame_rate * duracao)
-        upscale_factor = 8  # Increased from 6 to 8 for smoother motion
-        upscale_width = 1920 * upscale_factor  # 15360
-        upscale_height = 1080 * upscale_factor  # 8640
+        upscale_factor = 10  # Professional upscale: 10x for maximum precision
+        upscale_width = 1920 * upscale_factor  # 19200px
+        upscale_height = 1080 * upscale_factor  # 10800px
 
         # Define zoom effect based on type
         # CRITICAL: NO trunc() - causes jitter due to rounding
         # Use continuous float values for smooth sub-pixel motion
         if zoom_type == "zoomout":
             # ZOOM OUT: Starts zoomed in, ends normal
-            zoom_start = 1.324
+            zoom_start = 1.25  # Slower, smoother zoom
             zoom_end = 1.0
             zoom_diff = zoom_start - zoom_end
             zoom_formula = f"max({zoom_start}-{zoom_diff}*on/{total_frames},{zoom_end})"
@@ -406,37 +407,38 @@ def image_to_video(
             y_formula = "ih/2-(ih/zoom/2)"
 
         elif zoom_type == "zoompanright":
-            # ZOOM IN + PAN RIGHT: Zoom in while panning from left to right
+            # ZOOM IN + PAN RIGHT: Professional formula from FFmpeg study
+            # Key: Use (iw-ow)*on/d formula for perfect linear pan
             zoom_start = 1.0
-            zoom_end = 1.324
+            zoom_end = 1.25  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
 
-            # ANTI-JITTER: Use FIXED max_pan based on zoom_end, not variable zoom
-            # max_pan = iw - iw/zoom_end = 15360 - 15360/1.324 = 3757.0
-            # This ensures linear horizontal movement without jitter
-            max_pan = upscale_width - upscale_width / zoom_end  # ~3757 for 15360px
-            x_formula = f"(on/{total_frames})*{max_pan:.1f}"  # Linear: 0 → 3757
-            y_formula = "ih/2-(ih/zoom/2)"
+            # Professional pan formula: (iw-ow)*on/d
+            # iw = input width (19200), ow = output width (1920)
+            # Pan from LEFT (x=0) to RIGHT (x=max)
+            # Using 'd' variable from zoompan (duration in frames)
+            x_formula = f"(iw-1920)*on/{total_frames}"
+            y_formula = "(ih-1080)/2"  # Center vertically (fixed)
 
         elif zoom_type == "zoompanleft":
-            # ZOOM IN + PAN LEFT: Zoom in while panning from right to left
+            # ZOOM IN + PAN LEFT: Professional formula from FFmpeg study
+            # Key: Use (iw-ow)*(d-on)/d for reverse pan
             zoom_start = 1.0
-            zoom_end = 1.324
+            zoom_end = 1.25  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
 
-            # ANTI-JITTER: Use FIXED max_pan based on zoom_end, not variable zoom
-            # max_pan = iw - iw/zoom_end = 15360 - 15360/1.324 = 3757.0
-            # This ensures linear horizontal movement without jitter
-            max_pan = upscale_width - upscale_width / zoom_end  # ~3757 for 15360px
-            x_formula = f"{max_pan:.1f}*(1-on/{total_frames})"  # Linear: 3757 → 0
-            y_formula = "ih/2-(ih/zoom/2)"
+            # Professional pan formula: (iw-ow)*(d-on)/d
+            # Pan from RIGHT (x=max) to LEFT (x=0)
+            # Using 'd' variable from zoompan
+            x_formula = f"(iw-1920)*({total_frames}-on)/{total_frames}"
+            y_formula = "(ih-1080)/2"  # Center vertically (fixed)
 
         else:  # "zoomin" (default)
             # ZOOM IN: Starts normal, ends zoomed in
             zoom_start = 1.0
-            zoom_end = 1.324
+            zoom_end = 1.25  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
             # Centered - no trunc() for smooth motion
