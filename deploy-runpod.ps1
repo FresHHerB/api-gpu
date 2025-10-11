@@ -38,7 +38,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "📝 Step 3: Creating RunPod template..." -ForegroundColor Blue
 
 $templateBody = @{
-    query = "mutation { saveTemplate(input: { name: \`"api-gpu-worker-v2.10\`", imageName: \`"$DOCKER_IMAGE`:$VERSION\`", dockerArgs: \`"python -u rp_handler.py\`", containerDiskInGb: 10, volumeInGb: 0, isServerless: true, env: [{key: \`"WORK_DIR\`", value: \`"/tmp/work\`"}, {key: \`"OUTPUT_DIR\`", value: \`"/tmp/output\`"}, {key: \`"BATCH_SIZE\`", value: \`"3\`"}] }) { id name imageName } }"
+    query = "mutation { saveTemplate(input: { name: \`"api-gpu-worker-v2.10\`", imageName: \`"$DOCKER_IMAGE`:$VERSION\`", dockerArgs: \`"python -u rp_handler.py\`", containerDiskInGb: 10, volumeInGb: 0, isServerless: true, env: [{key: \`"WORK_DIR\`", value: \`"/tmp/work\`"}, {key: \`"OUTPUT_DIR\`", value: \`"/tmp/output\`"}, {key: \`"BATCH_SIZE\`", value: \`"3\`"}, {key: \`"NVIDIA_VISIBLE_DEVICES\`", value: \`"all\`"}, {key: \`"NVIDIA_DRIVER_CAPABILITIES\`", value: \`"compute,utility,video\`"}] }) { id name imageName env { key value } } }"
 } | ConvertTo-Json
 
 $templateResponse = Invoke-RestMethod -Uri "https://api.runpod.io/graphql" `
