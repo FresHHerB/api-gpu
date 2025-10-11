@@ -411,8 +411,12 @@ def image_to_video(
             zoom_end = 1.324
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
-            # Pan from left (0) to right (max) - smooth continuous motion
-            x_formula = f"on/{total_frames}*(iw-iw/zoom)"
+
+            # ANTI-JITTER: Use FIXED max_pan based on zoom_end, not variable zoom
+            # max_pan = iw - iw/zoom_end = 15360 - 15360/1.324 = 3757.0
+            # This ensures linear horizontal movement without jitter
+            max_pan = upscale_width - upscale_width / zoom_end  # ~3757 for 15360px
+            x_formula = f"(on/{total_frames})*{max_pan:.1f}"  # Linear: 0 → 3757
             y_formula = "ih/2-(ih/zoom/2)"
 
         elif zoom_type == "zoompanleft":
@@ -421,8 +425,12 @@ def image_to_video(
             zoom_end = 1.324
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
-            # Pan from right (max) to left (0) - smooth continuous motion
-            x_formula = f"(iw-iw/zoom)*(1-on/{total_frames})"
+
+            # ANTI-JITTER: Use FIXED max_pan based on zoom_end, not variable zoom
+            # max_pan = iw - iw/zoom_end = 15360 - 15360/1.324 = 3757.0
+            # This ensures linear horizontal movement without jitter
+            max_pan = upscale_width - upscale_width / zoom_end  # ~3757 for 15360px
+            x_formula = f"{max_pan:.1f}*(1-on/{total_frames})"  # Linear: 3757 → 0
             y_formula = "ih/2-(ih/zoom/2)"
 
         else:  # "zoomin" (default)

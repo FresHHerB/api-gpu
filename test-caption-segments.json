@@ -1,0 +1,25 @@
+{
+  "url_video": "http://minio.automear.com/canais/video_10s.mp4",
+  "url_srt": "http://minio.automear.com/canais/test.srt",
+  "path": "test/caption-segments/",
+  "output_filename": "video_with_segments.mp4",
+  "style": {
+    "font": {
+      "name": "Arial",
+      "size": 48,
+      "bold": true
+    },
+    "colors": {
+      "primary": "#FFFF00",
+      "outline": "#000000"
+    },
+    "border": {
+      "style": 1,
+      "width": 3
+    },
+    "position": {
+      "alignment": "bottom_center",
+      "marginVertical": 30
+    }
+  }
+}

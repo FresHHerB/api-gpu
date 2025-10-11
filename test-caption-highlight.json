@@ -1,0 +1,25 @@
+{
+  "url_video": "http://minio.automear.com/canais/video_10s.mp4",
+  "url_words_json": "http://minio.automear.com/canais/words_test_10s.json",
+  "path": "test/caption-highlight/",
+  "output_filename": "video_with_highlight.mp4",
+  "style": {
+    "fonte": "Arial Black",
+    "tamanho_fonte": 72,
+    "fundo_opacidade": 180,
+    "fundo_cor_r": 0,
+    "fundo_cor_g": 0,
+    "fundo_cor_b": 0,
+    "fundo_arredondado": true,
+    "texto_cor_r": 255,
+    "texto_cor_g": 255,
+    "texto_cor_b": 255,
+    "highlight_cor_r": 0,
+    "highlight_cor_g": 255,
+    "highlight_cor_b": 0,
+    "highlight_borda": 15,
+    "padding_horizontal": 40,
+    "padding_vertical": 80,
+    "position": "bottom_center"
+  }
+}
