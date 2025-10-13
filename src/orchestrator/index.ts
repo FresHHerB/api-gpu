@@ -15,9 +15,9 @@ import { logger } from '../shared/utils/logger';
 dotenv.config();
 
 // Importar rotas
-import videoProxyRoutes from './routes/videoProxy';
+import videoProxyRoutes, { setJobService as setVideoJobService } from './routes/videoProxy';
 import transcriptionRoutes from './routes/transcription';
-import captionUnifiedRoutes from './routes/caption-unified.routes';
+import captionUnifiedRoutes, { setJobService as setCaptionJobService } from './routes/caption-unified.routes';
 import jobRoutes, { setJobService } from './routes/jobs.routes';
 
 // Importar cleanup scheduler
@@ -45,8 +45,10 @@ async function initializeQueueSystem() {
     // Create queue system
     queueSystem = createQueueSystem(runpodService);
 
-    // Inject JobService into job routes
+    // Inject JobService into all routes
     setJobService(queueSystem.jobService);
+    setVideoJobService(queueSystem.jobService);
+    setCaptionJobService(queueSystem.jobService);
 
     // Start queue system
     queueSystem.start();
@@ -163,25 +165,22 @@ app.get('/', (_req, res) => {
     },
     endpoints: {
       sync: {
-        transcribe: 'POST /transcribe'
+        transcribe: 'POST /transcribe (synchronous transcription)'
       },
       async: {
-        img2vid: 'POST /video/img2vid (webhook_url, id_roteiro, images[])',
-        caption: 'POST /video/caption (webhook_url, id_roteiro, url_video, url_srt)',
-        addaudio: 'POST /video/addaudio (webhook_url, id_roteiro, url_video, url_audio)',
-        captionSegments: 'POST /caption_style/segments (webhook_url, id_roteiro)',
-        captionHighlight: 'POST /caption_style/highlight (webhook_url, id_roteiro)'
+        img2vid: 'POST /video/img2vid (webhook_url required, id_roteiro optional)',
+        caption: 'POST /video/caption (webhook_url required, id_roteiro optional)',
+        addaudio: 'POST /video/addaudio (webhook_url required, id_roteiro optional)',
+        captionStyle: 'POST /caption_style (webhook_url required, type: segments|highlight)',
+        captionStyled: 'POST /video/caption_style (webhook_url required, with custom styling)'
       },
       jobs: {
-        status: 'GET /jobs/:jobId (check job status)',
+        status: 'GET /jobs/:jobId (check job status with progress)',
         cancel: 'POST /jobs/:jobId/cancel (cancel running job)',
         queueStats: 'GET /queue/stats (queue statistics)'
       },
       health: {
-        service: 'GET /health (includes queue stats)',
-        runpod: 'GET /runpod/health',
-        transcription: 'GET /transcribe/health',
-        captionStyle: 'GET /caption_style/health'
+        service: 'GET /health (includes queue stats)'
       }
     },
     documentation: '/docs'

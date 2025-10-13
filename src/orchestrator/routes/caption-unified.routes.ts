@@ -1,23 +1,21 @@
 // ============================================
-// Unified Caption Style Route
+// Unified Caption Style Route - Queue-based with Webhooks
 // Single endpoint for both segments (classic) and highlight (karaoke) subtitles
 // ============================================
 
 import { Router, Request, Response } from 'express';
-import { randomUUID } from 'crypto';
-import { RunPodService } from '../services/runpodService';
+import { logger } from '../../shared/utils/logger';
+import { JobService } from '../queue/jobService';
 import Joi from 'joi';
+import { WebhookService } from '../queue/webhookService';
 
 const router = Router();
 
-// Lazy initialization to avoid crash if endpoint not configured
-let runpodService: RunPodService | null = null;
+// JobService será injetado no router pelo index.ts
+let jobService: JobService;
 
-function getRunPodService(): RunPodService {
-  if (!runpodService) {
-    runpodService = new RunPodService();
-  }
-  return runpodService;
+export function setJobService(service: JobService) {
+  jobService = service;
 }
 
 // Position mappings: string → ASS alignment number
@@ -52,11 +50,25 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   };
 }
 
+/**
+ * Validate webhook URL (anti-SSRF)
+ */
+const webhookUrlValidator = (value: string, helpers: Joi.CustomHelpers) => {
+  if (!WebhookService.validateWebhookUrl(value)) {
+    return helpers.error('any.invalid', {
+      message: 'Invalid webhook URL - localhost and private IPs are not allowed'
+    });
+  }
+  return value;
+};
+
 // ============================================
 // Validation Schema
 // ============================================
 
 const unifiedCaptionSchema = Joi.object({
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
   url_video: Joi.string().required(),
   url_caption: Joi.string().required(),
   path: Joi.string().required(),
@@ -105,42 +117,64 @@ const unifiedCaptionSchema = Joi.object({
 });
 
 // ============================================
+// Middleware: API Key Authentication
+// ============================================
+
+const authenticateApiKey = (req: Request, res: Response, next: Function): void => {
+  const apiKey = req.get('X-API-Key');
+  const expectedKey = process.env.X_API_KEY;
+
+  if (!apiKey || apiKey !== expectedKey) {
+    logger.warn('Unauthorized request - invalid API key', {
+      ip: req.ip,
+      path: req.path
+    });
+
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid or missing API key'
+    });
+    return;
+  }
+
+  next();
+};
+
+// ============================================
 // POST /caption_style
 // Unified endpoint for both segments and highlight subtitles
 // ============================================
-router.post('/caption_style', async (req: Request, res: Response) => {
-  const startTime = new Date();
-  const jobId = randomUUID();
-
+router.post('/caption_style', authenticateApiKey, async (req: Request, res: Response) => {
   try {
-    console.log(`[CaptionStyle] Job ${jobId} started`);
-
     // Validate request
     const { error, value } = unifiedCaptionSchema.validate(req.body, { abortEarly: false });
     if (error) {
       return res.status(400).json({
         error: 'Validation failed',
-        message: error.details.map(d => d.message).join(', '),
-        job_id: jobId
+        message: error.details.map(d => d.message).join(', ')
       });
     }
 
-    const { url_video, url_caption, path, output_filename, type, style } = value;
+    const { webhook_url, id_roteiro, url_video, url_caption, path, output_filename, type, style } = value;
 
-    console.log(`[CaptionStyle] Type: ${type}`);
-    console.log(`[CaptionStyle] Processing: ${url_video}`);
-    console.log(`[CaptionStyle] Caption: ${url_caption}`);
+    logger.info('🎨 CaptionStyle request received', {
+      type,
+      urlVideo: url_video,
+      idRoteiro: id_roteiro,
+      webhookUrl: webhook_url,
+      ip: req.ip
+    });
 
-    let result;
+    let operation: 'caption_segments' | 'caption_highlight';
+    let jobData: any;
 
-    // Route to appropriate handler based on type
+    // Prepare job data based on type
     if (type === 'segments') {
       // Classic segments (SRT-based)
       const alignment = POSITION_MAP[style.position.alignment];
 
-      console.log(`[CaptionStyle-Segments] Style: ${JSON.stringify(style)}`);
-
-      result = await getRunPodService().processVideo('caption_segments' as any, {
+      operation = 'caption_segments';
+      jobData = {
         url_video,
         url_srt: url_caption,  // Rename for worker compatibility
         path,
@@ -152,7 +186,7 @@ router.post('/caption_style', async (req: Request, res: Response) => {
             alignment
           }
         }
-      });
+      };
 
     } else {
       // Highlight (karaoke/word-by-word)
@@ -166,10 +200,8 @@ router.post('/caption_style', async (req: Request, res: Response) => {
       // Convert opacity from 0-100% to 0-255
       const opacidade255 = Math.round((style.fundo_opacidade / 100) * 255);
 
-      console.log(`[CaptionStyle-Highlight] Style (input): ${JSON.stringify(style)}`);
-      console.log(`[CaptionStyle-Highlight] Opacity conversion: ${style.fundo_opacidade}% → ${opacidade255}/255`);
-
-      result = await getRunPodService().processVideo('caption_highlight' as any, {
+      operation = 'caption_highlight';
+      jobData = {
         url_video,
         url_words_json: url_caption,  // Rename for worker compatibility
         path,
@@ -195,68 +227,29 @@ router.post('/caption_style', async (req: Request, res: Response) => {
           max_lines: style.max_lines,
           alignment
         }
-      });
+      };
     }
 
-    const endTime = new Date();
-    const durationMs = endTime.getTime() - startTime.getTime();
+    // Create job and enqueue
+    const job = await jobService.createJob(operation, jobData, webhook_url, id_roteiro);
 
-    console.log(`[CaptionStyle] Job ${jobId} completed in ${(durationMs / 1000).toFixed(2)}s`);
-
-    return res.status(200).json({
-      code: 200,
-      message: `Video with ${type} subtitles completed successfully`,
+    logger.info('✅ CaptionStyle job created', {
+      jobId: job.jobId,
+      status: job.status,
       type,
-      video_url: result.video_url,
-      job_id: jobId,
-      execution: {
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        durationMs,
-        durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
-      },
-      stats: result.stats
+      operation
     });
 
-  } catch (error: any) {
-    const endTime = new Date();
-    const durationMs = endTime.getTime() - startTime.getTime();
+    return res.status(202).json(job);
 
-    console.error(`[CaptionStyle] Job ${jobId} failed:`, error);
+  } catch (error: any) {
+    logger.error('❌ CaptionStyle job creation failed', {
+      error: error.message || 'Unknown error'
+    });
 
     return res.status(500).json({
-      error: 'Caption processing failed',
-      message: error.message || 'Unknown error occurred',
-      job_id: jobId,
-      execution: {
-        startTime: startTime.toISOString(),
-        endTime: endTime.toISOString(),
-        durationMs,
-        durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
-      }
-    });
-  }
-});
-
-// ============================================
-// GET /caption_style/health
-// Health check for caption service
-// ============================================
-router.get('/caption_style/health', async (_req: Request, res: Response) => {
-  try {
-    const runpodHealth = await getRunPodService().checkHealth();
-
-    return res.status(runpodHealth ? 200 : 503).json({
-      status: runpodHealth ? 'healthy' : 'unhealthy',
-      service: 'caption_style',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error: any) {
-    return res.status(503).json({
-      status: 'unhealthy',
-      service: 'caption_style',
-      error: error.message,
-      timestamp: new Date().toISOString()
+      error: 'Job creation failed',
+      message: error.message || 'Unknown error occurred'
     });
   }
 });

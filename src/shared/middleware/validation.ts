@@ -1,12 +1,31 @@
 import Joi from 'joi';
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
+import { WebhookService } from '../../orchestrator/queue/webhookService';
+
+// ============================================
+// Custom Validators
+// ============================================
+
+/**
+ * Validate webhook URL (anti-SSRF)
+ */
+const webhookUrlValidator = (value: string, helpers: Joi.CustomHelpers) => {
+  if (!WebhookService.validateWebhookUrl(value)) {
+    return helpers.error('any.invalid', {
+      message: 'Invalid webhook URL - localhost and private IPs are not allowed'
+    });
+  }
+  return value;
+};
 
 // ============================================
 // Validation Schemas
 // ============================================
 
 export const captionRequestSchema = Joi.object({
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
   url_video: Joi.string().pattern(/^https?:\/\/.+/).required(),
   url_srt: Joi.string().pattern(/^https?:\/\/.+/).required(),
   path: Joi.string().required(),
@@ -14,17 +33,33 @@ export const captionRequestSchema = Joi.object({
 });
 
 export const img2VidRequestSchema = Joi.object({
-  url_image: Joi.string().uri().required(),
-  frame_rate: Joi.number().min(1).max(60).default(24),
-  duration: Joi.number().min(0.1).max(300).required()
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
+  images: Joi.array().items(
+    Joi.object({
+      id: Joi.string().required(),
+      image_url: Joi.string().pattern(/^https?:\/\/.+/).required(),
+      duracao: Joi.number().min(0.1).max(300).required()
+    })
+  ).min(1).required(),
+  path: Joi.string().required(),
+  zoom_types: Joi.array().items(
+    Joi.string().valid('zoomin', 'zoomout', 'zoompanright')
+  ).optional()
 });
 
 export const addAudioRequestSchema = Joi.object({
-  url_video: Joi.string().uri().required(),
-  url_audio: Joi.string().uri().required()
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
+  url_video: Joi.string().pattern(/^https?:\/\/.+/).required(),
+  url_audio: Joi.string().pattern(/^https?:\/\/.+/).required(),
+  path: Joi.string().required(),
+  output_filename: Joi.string().required()
 });
 
 export const captionStyledRequestSchema = Joi.object({
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
   url_video: Joi.string().pattern(/^https?:\/\/.+/).required(),
   url_srt: Joi.string().pattern(/^https?:\/\/.+/).required(),
   path: Joi.string().required(),
@@ -93,6 +128,18 @@ const encodeUrls = (body: any): any => {
     if (encoded.url_image.includes(' ') || encoded.url_image.includes('|')) {
       encoded.url_image = encodeURI(encoded.url_image);
     }
+  }
+
+  // Encode image URLs in images array (for img2vid)
+  if (encoded.images && Array.isArray(encoded.images)) {
+    encoded.images = encoded.images.map((img: any) => {
+      if (img.image_url && typeof img.image_url === 'string') {
+        if (img.image_url.includes(' ') || img.image_url.includes('|')) {
+          return { ...img, image_url: encodeURI(img.image_url) };
+        }
+      }
+      return img;
+    });
   }
 
   return encoded;
