@@ -229,22 +229,27 @@ router.post(
     try {
       const { webhook_url, id_roteiro, ...data }: ConcatenateRequestAsync = req.body;
 
+      // Extract path_raiz from path
+      const pathRaiz = extractPathRaiz(data.path);
+
       logger.info('🎬 Concatenate request received', {
         videoCount: data.video_urls.length,
         idRoteiro: id_roteiro,
         webhookUrl: webhook_url,
         path: data.path,
+        pathRaiz: pathRaiz,
         outputFilename: data.output_filename,
         ip: req.ip
       });
 
-      // Create job and enqueue
-      const job = await jobService.createJob('concatenate', data, webhook_url, id_roteiro);
+      // Create job and enqueue (with pathRaiz)
+      const job = await jobService.createJob('concatenate', data, webhook_url, id_roteiro, pathRaiz);
 
       logger.info('✅ Concatenate job created', {
         jobId: job.jobId,
         status: job.status,
-        videoCount: data.video_urls.length
+        videoCount: data.video_urls.length,
+        pathRaiz: pathRaiz
       });
 
       res.status(202).json(job);
