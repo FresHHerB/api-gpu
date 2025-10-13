@@ -186,19 +186,25 @@ router.post(
     try {
       const { webhook_url, id_roteiro, ...data }: AddAudioRequestAsync = req.body;
 
+      // Extract path_raiz from path
+      const pathRaiz = extractPathRaiz(data.path);
+
       logger.info('🎵 AddAudio request received', {
         urlVideo: data.url_video,
         idRoteiro: id_roteiro,
         webhookUrl: webhook_url,
+        path: data.path,
+        pathRaiz: pathRaiz,
         ip: req.ip
       });
 
-      // Create job and enqueue
-      const job = await jobService.createJob('addaudio', data, webhook_url, id_roteiro);
+      // Create job and enqueue (with pathRaiz)
+      const job = await jobService.createJob('addaudio', data, webhook_url, id_roteiro, pathRaiz);
 
       logger.info('✅ AddAudio job created', {
         jobId: job.jobId,
-        status: job.status
+        status: job.status,
+        pathRaiz: pathRaiz
       });
 
       res.status(202).json(job);
