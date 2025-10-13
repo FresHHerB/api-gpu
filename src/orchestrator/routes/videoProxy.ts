@@ -143,19 +143,25 @@ router.post(
     try {
       const { webhook_url, id_roteiro, ...data }: CaptionRequestAsync = req.body;
 
+      // Extract path_raiz from path
+      const pathRaiz = extractPathRaiz(data.path);
+
       logger.info('📹 Caption request received', {
         urlVideo: data.url_video,
         idRoteiro: id_roteiro,
         webhookUrl: webhook_url,
+        path: data.path,
+        pathRaiz: pathRaiz,
         ip: req.ip
       });
 
-      // Create job and enqueue
-      const job = await jobService.createJob('caption', data, webhook_url, id_roteiro);
+      // Create job and enqueue (with pathRaiz)
+      const job = await jobService.createJob('caption', data, webhook_url, id_roteiro, pathRaiz);
 
       logger.info('✅ Caption job created', {
         jobId: job.jobId,
-        status: job.status
+        status: job.status,
+        pathRaiz: pathRaiz
       });
 
       res.status(202).json(job);
@@ -286,20 +292,26 @@ router.post(
     try {
       const { webhook_url, id_roteiro, ...data }: CaptionStyledRequestAsync = req.body;
 
+      // Extract path_raiz from path
+      const pathRaiz = extractPathRaiz(data.path);
+
       logger.info('🎨 Styled caption request received', {
         urlVideo: data.url_video,
         hasStyle: !!data.style,
         idRoteiro: id_roteiro,
         webhookUrl: webhook_url,
+        path: data.path,
+        pathRaiz: pathRaiz,
         ip: req.ip
       });
 
-      // Create job and enqueue
-      const job = await jobService.createJob('caption', data, webhook_url, id_roteiro);
+      // Create job and enqueue (with pathRaiz)
+      const job = await jobService.createJob('caption', data, webhook_url, id_roteiro, pathRaiz);
 
       logger.info('✅ Styled caption job created', {
         jobId: job.jobId,
-        status: job.status
+        status: job.status,
+        pathRaiz: pathRaiz
       });
 
       res.status(202).json(job);
