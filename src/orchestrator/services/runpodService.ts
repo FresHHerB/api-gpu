@@ -9,7 +9,8 @@ import {
   RunPodJobResponse,
   RunPodEndpointConfig,
   VideoResponse,
-  CaptionStyledRequest
+  CaptionStyledRequest,
+  JobOperation
 } from '../../shared/types';
 import { buildForceStyleString } from '../../shared/utils/subtitleStyles';
 
@@ -55,7 +56,7 @@ export class RunPodService {
    * For large batches (>50 images), automatically splits into multiple workers
    */
   async processVideo(
-    operation: 'caption' | 'img2vid' | 'addaudio',
+    operation: JobOperation,
     data: any
   ): Promise<VideoResponse | any> {
     const startTime = Date.now();
@@ -200,7 +201,7 @@ export class RunPodService {
    * Public method to allow async endpoints to submit without waiting
    */
   async submitJob(
-    operation: 'caption' | 'img2vid' | 'addaudio',
+    operation: JobOperation,
     data: any
   ): Promise<RunPodJobResponse> {
     const payload: RunPodJobRequest = {

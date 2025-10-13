@@ -128,7 +128,7 @@ export interface VideoResponse {
 // ============================================
 
 export interface RunPodJobInput {
-  operation: 'caption' | 'img2vid' | 'addaudio';
+  operation: JobOperation;
   [key: string]: any; // Request data (url_video, url_srt, etc)
 }
 
