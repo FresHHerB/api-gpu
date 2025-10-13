@@ -55,6 +55,17 @@ export interface AddAudioRequest {
   // bucket is read from S3_BUCKET_NAME env var
 }
 
+export interface ConcatenateVideoUrl {
+  video_url: string;
+}
+
+export interface ConcatenateRequest {
+  video_urls: ConcatenateVideoUrl[];
+  path: string; // S3 path including /videos/temp/ (e.g., "Sleepless Historian/Video Title/videos/temp/")
+  output_filename: string; // Output filename (e.g., "video_concatenado.mp4")
+  // bucket is read from S3_BUCKET_NAME env var
+}
+
 // ============================================
 // Caption Style Types
 // ============================================
@@ -290,7 +301,8 @@ export type JobOperation =
   | 'caption'
   | 'addaudio'
   | 'caption_segments'
-  | 'caption_highlight';
+  | 'caption_highlight'
+  | 'concatenate';
 
 export interface Job {
   jobId: string;                    // UUID gerado pelo orquestrador
@@ -364,6 +376,11 @@ export interface AddAudioRequestAsync extends AddAudioRequest {
 }
 
 export interface CaptionStyledRequestAsync extends CaptionStyledRequest {
+  webhook_url: string;
+  id_roteiro?: number;
+}
+
+export interface ConcatenateRequestAsync extends ConcatenateRequest {
   webhook_url: string;
   id_roteiro?: number;
 }

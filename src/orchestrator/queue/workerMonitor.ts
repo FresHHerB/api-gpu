@@ -353,7 +353,8 @@ export class WorkerMonitor {
       caption: 10 * 60 * 1000,     // 10 min
       addaudio: 5 * 60 * 1000,     // 5 min
       caption_segments: 10 * 60 * 1000,  // 10 min
-      caption_highlight: 10 * 60 * 1000  // 10 min
+      caption_highlight: 10 * 60 * 1000,  // 10 min
+      concatenate: 15 * 60 * 1000  // 15 min
     };
 
     return timeouts[operation] || 30 * 60 * 1000; // Default: 30 min

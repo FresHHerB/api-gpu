@@ -194,7 +194,8 @@ export class JobService {
       caption: 2,
       addaudio: 1,
       caption_segments: 2,
-      caption_highlight: 2
+      caption_highlight: 2,
+      concatenate: 3
     };
 
     const avgTime = avgTimes[operation] || 3;

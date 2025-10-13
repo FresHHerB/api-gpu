@@ -9,14 +9,16 @@ import {
   Img2VidRequestAsync,
   CaptionRequestAsync,
   AddAudioRequestAsync,
-  CaptionStyledRequestAsync
+  CaptionStyledRequestAsync,
+  ConcatenateRequestAsync
 } from '../../shared/types';
 import {
   validateRequest,
   captionRequestSchema,
   img2VidRequestSchema,
   addAudioRequestSchema,
-  captionStyledRequestSchema
+  captionStyledRequestSchema,
+  concatenateRequestSchema
 } from '../../shared/middleware/validation';
 
 const router = Router();
@@ -203,6 +205,52 @@ router.post(
 
     } catch (error) {
       logger.error('❌ AddAudio job creation failed', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+
+      res.status(500).json({
+        error: 'Job creation failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+);
+
+/**
+ * POST /video/concatenate
+ * Concatenate multiple videos into one
+ * Returns immediately with jobId - result sent to webhook_url
+ */
+router.post(
+  '/video/concatenate',
+  authenticateApiKey,
+  validateRequest(concatenateRequestSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { webhook_url, id_roteiro, ...data }: ConcatenateRequestAsync = req.body;
+
+      logger.info('🎬 Concatenate request received', {
+        videoCount: data.video_urls.length,
+        idRoteiro: id_roteiro,
+        webhookUrl: webhook_url,
+        path: data.path,
+        outputFilename: data.output_filename,
+        ip: req.ip
+      });
+
+      // Create job and enqueue
+      const job = await jobService.createJob('concatenate', data, webhook_url, id_roteiro);
+
+      logger.info('✅ Concatenate job created', {
+        jobId: job.jobId,
+        status: job.status,
+        videoCount: data.video_urls.length
+      });
+
+      res.status(202).json(job);
+
+    } catch (error) {
+      logger.error('❌ Concatenate job creation failed', {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
 

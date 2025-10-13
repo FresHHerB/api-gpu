@@ -57,6 +57,18 @@ export const addAudioRequestSchema = Joi.object({
   output_filename: Joi.string().required()
 });
 
+export const concatenateRequestSchema = Joi.object({
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
+  video_urls: Joi.array().items(
+    Joi.object({
+      video_url: Joi.string().pattern(/^https?:\/\/.+/).required()
+    })
+  ).min(2).required(),
+  path: Joi.string().required(),
+  output_filename: Joi.string().required()
+});
+
 export const captionStyledRequestSchema = Joi.object({
   webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
   id_roteiro: Joi.number().integer().optional(),
@@ -139,6 +151,18 @@ const encodeUrls = (body: any): any => {
         }
       }
       return img;
+    });
+  }
+
+  // Encode video URLs in video_urls array (for concatenate)
+  if (encoded.video_urls && Array.isArray(encoded.video_urls)) {
+    encoded.video_urls = encoded.video_urls.map((video: any) => {
+      if (video.video_url && typeof video.video_url === 'string') {
+        if (video.video_url.includes(' ') || video.video_url.includes('|')) {
+          return { ...video, video_url: encodeURI(video.video_url) };
+        }
+      }
+      return video;
     });
   }
 

@@ -1,6 +1,6 @@
 """
 RunPod Serverless Handler for GPU Video Processing
-Handles: caption, img2vid (batch), addaudio operations
+Handles: caption, img2vid (batch), addaudio, concatenate operations
 Returns video URLs via HTTP server running on worker
 """
 
@@ -789,6 +789,126 @@ def add_audio(
         audio_path.unlink(missing_ok=True)
 
 
+def concatenate_videos(
+    video_urls: List[Dict[str, str]],
+    path: str,
+    output_filename: str,
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """Concatenate multiple videos into one and upload to S3
+
+    Args:
+        video_urls: List of video dictionaries with 'video_url' key
+        path: S3 path for upload
+        output_filename: Output filename
+        worker_id: Worker identifier (optional)
+    """
+    job_id = str(uuid.uuid4())
+    logger.info(f"Starting concatenate job: {job_id} ({len(video_urls)} videos)")
+
+    input_files = []
+    concat_list_path = WORK_DIR / f"{job_id}_concat_list.txt"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        # Download all videos
+        for i, video_item in enumerate(video_urls):
+            video_url = normalize_url(video_item['video_url'])
+            input_path = WORK_DIR / f"{job_id}_input_{i}.mp4"
+
+            logger.info(f"Downloading video {i+1}/{len(video_urls)}: {video_url}")
+            download_file(video_url, input_path)
+            input_files.append(input_path)
+
+        # Generate concat list file for FFmpeg
+        # Format: file 'absolute_path'
+        with open(concat_list_path, 'w', encoding='utf-8') as f:
+            for input_file in input_files:
+                # Use absolute path with forward slashes for FFmpeg
+                abs_path = str(input_file.absolute()).replace('\\', '/')
+                f.write(f"file '{abs_path}'\n")
+
+        logger.info(f"Generated concat list with {len(input_files)} files")
+
+        # FFmpeg concat command - GPU or CPU encoding
+        # Use concat demuxer with -c copy for fast concatenation (no re-encoding)
+        # This works when all videos have same codec/resolution/fps
+        # If videos differ, we'll need to re-encode
+        if GPU_AVAILABLE:
+            logger.info("🎮 Using GPU encoding (NVENC) for concatenation")
+            cmd = [
+                'ffmpeg', '-y',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', str(concat_list_path),
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+        else:
+            logger.info("💻 Using CPU encoding (libx264) for concatenation")
+            cmd = [
+                'ffmpeg', '-y',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', str(concat_list_path),
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M',
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-movflags', '+faststart',
+                str(output_path)
+            ]
+
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Videos concatenated: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Upload to S3
+        # S3 key: {path}/{filename} (path may include /videos/temp/)
+        # Ensure path ends with / for proper S3 key construction
+        if not path.endswith('/'):
+            path = path + '/'
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local file after S3 upload
+        output_path.unlink(missing_ok=True)
+
+        return {
+            'video_url': video_url,
+            'filename': output_filename,
+            's3_key': s3_key,
+            'video_count': len(video_urls)
+        }
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input files and concat list
+        for input_file in input_files:
+            input_file.unlink(missing_ok=True)
+        concat_list_path.unlink(missing_ok=True)
+
+
 def add_caption_segments(
     url_video: str,
     url_srt: str,
@@ -1134,6 +1254,30 @@ def handler(job: Dict) -> Dict[str, Any]:
                 "filename": result['filename'],
                 "s3_key": result['s3_key'],
                 "message": "Caption highlight added and uploaded to S3 successfully"
+            }
+
+        elif operation == 'concatenate':
+            video_urls = job_input.get('video_urls', [])
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
+
+            if not video_urls or not path or not output_filename:
+                raise ValueError("Missing required fields: video_urls, path, output_filename")
+
+            if len(video_urls) < 2:
+                raise ValueError("At least 2 videos are required for concatenation")
+
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            logger.info(f"🎬 Concatenating {len(video_urls)} videos")
+
+            result = concatenate_videos(video_urls, path, output_filename, worker_id)
+            return {
+                "success": True,
+                "video_url": result['video_url'],
+                "filename": result['filename'],
+                "s3_key": result['s3_key'],
+                "video_count": result['video_count'],
+                "message": f"{result['video_count']} videos concatenated and uploaded to S3 successfully"
             }
 
         else:
