@@ -210,6 +210,7 @@ export class WorkerMonitor {
     await this.webhookService.sendWebhook(job.jobId, job.webhookUrl, {
       jobId: job.jobId,
       idRoteiro: job.idRoteiro,
+      pathRaiz: job.pathRaiz,
       status: 'COMPLETED',
       operation: job.operation,
       result,

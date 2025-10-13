@@ -28,9 +28,10 @@ export class JobService {
     operation: JobOperation,
     payload: any,
     webhookUrl: string,
-    idRoteiro?: number
+    idRoteiro?: number,
+    pathRaiz?: string
   ): Promise<JobSubmitResponse> {
-    logger.info('📝 Creating new job', { operation, idRoteiro });
+    logger.info('📝 Creating new job', { operation, idRoteiro, pathRaiz });
 
     // Criar job
     const job = await this.queueManager.enqueueJob({
@@ -39,6 +40,7 @@ export class JobService {
       payload,
       webhookUrl,
       idRoteiro,
+      pathRaiz,
       runpodJobIds: [],
       workersReserved: 0
     });

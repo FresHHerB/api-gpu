@@ -21,6 +21,28 @@ import {
 
 const router = Router();
 
+// ============================================
+// Helper Functions
+// ============================================
+
+/**
+ * Extract path_raiz from full path
+ * Example: "Mr. Nightmare/Video Title/videos/temp/" -> "Mr. Nightmare/Video Title/"
+ */
+function extractPathRaiz(path: string): string {
+  // Remove trailing slash
+  let cleanPath = path.endsWith('/') ? path.slice(0, -1) : path;
+
+  // Find the last occurrence of "/videos" and remove everything from there
+  const videosIndex = cleanPath.lastIndexOf('/videos');
+  if (videosIndex > 0) {
+    cleanPath = cleanPath.substring(0, videosIndex);
+  }
+
+  // Ensure it ends with /
+  return cleanPath.endsWith('/') ? cleanPath : cleanPath + '/';
+}
+
 // JobService será injetado no router pelo index.ts
 let jobService: JobService;
 
@@ -69,20 +91,26 @@ router.post(
     try {
       const { webhook_url, id_roteiro, ...data }: Img2VidRequestAsync = req.body;
 
+      // Extract path_raiz from path
+      const pathRaiz = extractPathRaiz(data.path);
+
       logger.info('🖼️ Img2Vid request received', {
         imageCount: data.images.length,
         idRoteiro: id_roteiro,
         webhookUrl: webhook_url,
+        path: data.path,
+        pathRaiz: pathRaiz,
         ip: req.ip
       });
 
-      // Create job and enqueue
-      const job = await jobService.createJob('img2vid', data, webhook_url, id_roteiro);
+      // Create job and enqueue (with pathRaiz for img2vid)
+      const job = await jobService.createJob('img2vid', data, webhook_url, id_roteiro, pathRaiz);
 
       logger.info('✅ Img2Vid job created', {
         jobId: job.jobId,
         status: job.status,
-        imageCount: data.images.length
+        imageCount: data.images.length,
+        pathRaiz: pathRaiz
       });
 
       res.status(202).json(job);

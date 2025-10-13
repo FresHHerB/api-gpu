@@ -300,6 +300,7 @@ export interface Job {
   payload: any;                     // Dados originais da requisição
   webhookUrl: string;               // URL para notificação
   idRoteiro?: number;               // ID do roteiro (cliente)
+  pathRaiz?: string;                // Path raiz (para img2vid) - ex: "Channel/Video Title/"
   result?: any;                     // Resultado do processamento
   error?: string;                   // Mensagem de erro (se falhou)
   workersReserved: number;          // Quantos workers este job reservou
@@ -325,6 +326,7 @@ export interface QueueStats {
 export interface WebhookPayload {
   jobId: string;
   idRoteiro?: number;
+  pathRaiz?: string;                // Path raiz (para img2vid) - ex: "Channel/Video Title/"
   status: 'COMPLETED' | 'FAILED';
   operation: JobOperation;
   timestamp: string;
