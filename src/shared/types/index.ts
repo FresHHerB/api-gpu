@@ -278,3 +278,123 @@ export interface AuthenticatedRequest extends Express.Request {
     apiKey: string;
   };
 }
+
+// ============================================
+// Queue and Job Management Types
+// ============================================
+
+export type JobStatus = 'QUEUED' | 'SUBMITTED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export type JobOperation =
+  | 'img2vid'
+  | 'caption'
+  | 'addaudio'
+  | 'caption_segments'
+  | 'caption_highlight';
+
+export interface Job {
+  jobId: string;                    // UUID gerado pelo orquestrador
+  runpodJobIds: string[];           // IDs dos jobs no RunPod (pode ser vazio se QUEUED)
+  status: JobStatus;
+  operation: JobOperation;
+  payload: any;                     // Dados originais da requisição
+  webhookUrl: string;               // URL para notificação
+  idRoteiro?: number;               // ID do roteiro (cliente)
+  result?: any;                     // Resultado do processamento
+  error?: string;                   // Mensagem de erro (se falhou)
+  workersReserved: number;          // Quantos workers este job reservou
+  createdAt: Date;
+  submittedAt?: Date;
+  completedAt?: Date;
+  retryCount: number;               // Tentativas de webhook
+  attempts: number;                 // Tentativas de processamento
+}
+
+export interface QueueStats {
+  queued: number;
+  submitted: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+  totalJobs: number;
+  activeWorkers: number;
+  availableWorkers: number;
+}
+
+export interface WebhookPayload {
+  jobId: string;
+  idRoteiro?: number;
+  status: 'COMPLETED' | 'FAILED';
+  operation: JobOperation;
+  timestamp: string;
+  result?: any;                     // Resultado se COMPLETED
+  error?: {                         // Erro se FAILED
+    code: string;
+    message: string;
+    details?: string;
+  };
+  execution?: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+}
+
+// ============================================
+// Updated Request Types with Webhook Support
+// ============================================
+
+export interface CaptionRequestAsync extends CaptionRequest {
+  webhook_url: string;
+  id_roteiro?: number;
+}
+
+export interface Img2VidRequestAsync extends Img2VidRequest {
+  webhook_url: string;
+  id_roteiro?: number;
+}
+
+export interface AddAudioRequestAsync extends AddAudioRequest {
+  webhook_url: string;
+  id_roteiro?: number;
+}
+
+export interface CaptionStyledRequestAsync extends CaptionStyledRequest {
+  webhook_url: string;
+  id_roteiro?: number;
+}
+
+// ============================================
+// Job Response Types
+// ============================================
+
+export interface JobSubmitResponse {
+  jobId: string;
+  status: JobStatus;
+  idRoteiro?: number;
+  message: string;
+  estimatedTime?: string;
+  queuePosition?: number;
+  statusUrl: string;
+  createdAt: string;
+}
+
+export interface JobStatusResponse {
+  jobId: string;
+  status: JobStatus;
+  operation: JobOperation;
+  idRoteiro?: number;
+  progress?: {
+    completed: number;
+    total: number;
+    percentage: number;
+  };
+  result?: any;
+  error?: string;
+  createdAt: string;
+  submittedAt?: string;
+  completedAt?: string;
+  estimatedCompletion?: string;
+}

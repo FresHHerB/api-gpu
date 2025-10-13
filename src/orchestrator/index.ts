@@ -18,13 +18,47 @@ dotenv.config();
 import videoProxyRoutes from './routes/videoProxy';
 import transcriptionRoutes from './routes/transcription';
 import captionUnifiedRoutes from './routes/caption-unified.routes';
+import jobRoutes, { setJobService } from './routes/jobs.routes';
 
 // Importar cleanup scheduler
 import { startCleanupScheduler } from './utils/cleanup';
 
+// Importar queue system
+import { createQueueSystem, QueueSystem } from './utils/queueFactory';
+import { RunPodService } from './services/runpodService';
+
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
+
+// ============================================
+// Initialize Queue System
+// ============================================
+
+let queueSystem: QueueSystem;
+
+async function initializeQueueSystem() {
+  try {
+    // Initialize RunPodService
+    const runpodService = new RunPodService();
+
+    // Create queue system
+    queueSystem = createQueueSystem(runpodService);
+
+    // Inject JobService into job routes
+    setJobService(queueSystem.jobService);
+
+    // Start queue system
+    queueSystem.start();
+
+    logger.info('✅ Queue System started successfully');
+  } catch (error) {
+    logger.error('Failed to initialize Queue System', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
+  }
+}
 
 // ============================================
 // Ensure output directory exists
@@ -68,13 +102,33 @@ app.use((req, _res, next) => {
 // Health Check
 // ============================================
 
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'AutoDark Orchestrator',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
+app.get('/health', async (_req, res) => {
+  try {
+    const queueStats = queueSystem ? await queueSystem.jobService.getQueueStats() : null;
+
+    res.json({
+      status: 'healthy',
+      service: 'AutoDark Orchestrator',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      queue: queueStats ? {
+        queued: queueStats.queued,
+        processing: queueStats.submitted + queueStats.processing,
+        completed: queueStats.completed,
+        failed: queueStats.failed,
+        activeWorkers: queueStats.activeWorkers,
+        availableWorkers: queueStats.availableWorkers
+      } : null
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'degraded',
+      service: 'AutoDark Orchestrator',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      error: 'Queue system unavailable'
+    });
+  }
 });
 
 // ============================================
@@ -93,33 +147,38 @@ app.use('/', transcriptionRoutes);
 // Caption style routes (unified endpoint)
 app.use('/', captionUnifiedRoutes);
 
+// Job management routes
+app.use('/', jobRoutes);
+
 // Root endpoint
 app.get('/', (_req, res) => {
   res.json({
-    message: 'API GPU Orchestrator - RunPod Serverless',
-    version: '2.0.0',
+    message: 'API GPU Orchestrator - RunPod Serverless with Queue System',
+    version: '3.0.0',
     features: {
-      sync: 'Synchronous endpoints (block until complete)',
-      async: 'Asynchronous endpoints (submit and poll)'
+      queue: 'Job queue with webhook notifications',
+      workers: '3 concurrent workers managed automatically',
+      polling: 'Background polling (no request blocking)',
+      webhooks: 'Automatic result delivery to webhook_url'
     },
     endpoints: {
       sync: {
-        caption: 'POST /video/caption',
-        captionStyle: 'POST /caption_style (type: segments|highlight)',
-        img2vid: 'POST /video/img2vid',
-        addaudio: 'POST /video/addaudio',
         transcribe: 'POST /transcribe'
       },
       async: {
-        captionSubmit: 'POST /video/caption/async',
-        img2vidSubmit: 'POST /video/img2vid/async',
-        addaudioSubmit: 'POST /video/addaudio/async',
-        jobStatus: 'GET /video/job/:jobId',
-        jobResult: 'GET /video/job/:jobId/result',
-        jobCancel: 'POST /job/:jobId/cancel'
+        img2vid: 'POST /video/img2vid (webhook_url, id_roteiro, images[])',
+        caption: 'POST /video/caption (webhook_url, id_roteiro, url_video, url_srt)',
+        addaudio: 'POST /video/addaudio (webhook_url, id_roteiro, url_video, url_audio)',
+        captionSegments: 'POST /caption_style/segments (webhook_url, id_roteiro)',
+        captionHighlight: 'POST /caption_style/highlight (webhook_url, id_roteiro)'
+      },
+      jobs: {
+        status: 'GET /jobs/:jobId (check job status)',
+        cancel: 'POST /jobs/:jobId/cancel (cancel running job)',
+        queueStats: 'GET /queue/stats (queue statistics)'
       },
       health: {
-        service: 'GET /health',
+        service: 'GET /health (includes queue stats)',
         runpod: 'GET /runpod/health',
         transcription: 'GET /transcribe/health',
         captionStyle: 'GET /caption_style/health'
@@ -162,6 +221,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   // Ensure output directory exists before starting cleanup
   await ensureOutputDirectory();
 
+  // Initialize queue system
+  await initializeQueueSystem();
+
   // Start cleanup scheduler for old videos
   startCleanupScheduler();
 });
@@ -182,6 +244,12 @@ logger.info('⏱️ Server timeouts configured', {
 // Graceful shutdown
 const gracefulShutdown = (signal: string) => {
   logger.info(`📴 Shutdown initiated - Signal: ${signal}`);
+
+  // Stop queue system first
+  if (queueSystem) {
+    logger.info('⏸️ Stopping queue system...');
+    queueSystem.stop();
+  }
 
   server.close((err) => {
     if (err) {
