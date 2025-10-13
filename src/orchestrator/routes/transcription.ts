@@ -29,10 +29,10 @@ function getS3Service(): S3UploadService {
 }
 
 // ============================================
-// POST /transcribe
+// POST /gpu/transcribe
 // Process audio transcription with RunPod faster-whisper
 // ============================================
-router.post('/transcribe', async (req: Request, res: Response) => {
+router.post('/gpu/transcribe', async (req: Request, res: Response) => {
   const startTime = new Date();
   const jobId = randomUUID();
 
@@ -191,10 +191,10 @@ router.post('/transcribe', async (req: Request, res: Response) => {
 });
 
 // ============================================
-// GET /transcribe/health
+// GET /gpu/transcribe/health
 // Health check for transcription service
 // ============================================
-router.get('/transcribe/health', async (_req: Request, res: Response) => {
+router.get('/gpu/transcribe/health', async (_req: Request, res: Response) => {
   try {
     const whisperHealth = await getWhisperService().healthCheck();
 

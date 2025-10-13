@@ -7,17 +7,13 @@ import { logger } from '../../shared/utils/logger';
 import { JobService } from '../queue/jobService';
 import {
   Img2VidRequestAsync,
-  CaptionRequestAsync,
   AddAudioRequestAsync,
-  CaptionStyledRequestAsync,
   ConcatenateRequestAsync
 } from '../../shared/types';
 import {
   validateRequest,
-  captionRequestSchema,
   img2VidRequestSchema,
   addAudioRequestSchema,
-  captionStyledRequestSchema,
   concatenateRequestSchema
 } from '../../shared/middleware/validation';
 
@@ -81,12 +77,12 @@ const authenticateApiKey = (req: Request, res: Response, next: Function): void =
 // ============================================
 
 /**
- * POST /video/img2vid
+ * POST /gpu/video/img2vid
  * Convert images to videos with zoom effects
  * Returns immediately with jobId - result sent to webhook_url
  */
 router.post(
-  '/video/img2vid',
+  '/gpu/video/img2vid',
   authenticateApiKey,
   validateRequest(img2VidRequestSchema),
   async (req: Request, res: Response): Promise<void> => {
@@ -131,61 +127,12 @@ router.post(
 );
 
 /**
- * POST /video/caption
- * Add SRT subtitles to video
- * Returns immediately with jobId - result sent to webhook_url
- */
-router.post(
-  '/video/caption',
-  authenticateApiKey,
-  validateRequest(captionRequestSchema),
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { webhook_url, id_roteiro, ...data }: CaptionRequestAsync = req.body;
-
-      // Extract path_raiz from path
-      const pathRaiz = extractPathRaiz(data.path);
-
-      logger.info('📹 Caption request received', {
-        urlVideo: data.url_video,
-        idRoteiro: id_roteiro,
-        webhookUrl: webhook_url,
-        path: data.path,
-        pathRaiz: pathRaiz,
-        ip: req.ip
-      });
-
-      // Create job and enqueue (with pathRaiz)
-      const job = await jobService.createJob('caption', data, webhook_url, id_roteiro, pathRaiz);
-
-      logger.info('✅ Caption job created', {
-        jobId: job.jobId,
-        status: job.status,
-        pathRaiz: pathRaiz
-      });
-
-      res.status(202).json(job);
-
-    } catch (error) {
-      logger.error('❌ Caption job creation failed', {
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-
-      res.status(500).json({
-        error: 'Job creation failed',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  }
-);
-
-/**
- * POST /video/addaudio
+ * POST /gpu/video/addaudio
  * Synchronize audio with video
  * Returns immediately with jobId - result sent to webhook_url
  */
 router.post(
-  '/video/addaudio',
+  '/gpu/video/addaudio',
   authenticateApiKey,
   validateRequest(addAudioRequestSchema),
   async (req: Request, res: Response): Promise<void> => {
@@ -229,12 +176,12 @@ router.post(
 );
 
 /**
- * POST /video/concatenate
+ * POST /gpu/video/concatenate
  * Concatenate multiple videos into one
  * Returns immediately with jobId - result sent to webhook_url
  */
 router.post(
-  '/video/concatenate',
+  '/gpu/video/concatenate',
   authenticateApiKey,
   validateRequest(concatenateRequestSchema),
   async (req: Request, res: Response): Promise<void> => {
@@ -268,56 +215,6 @@ router.post(
 
     } catch (error) {
       logger.error('❌ Concatenate job creation failed', {
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-
-      res.status(500).json({
-        error: 'Job creation failed',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  }
-);
-
-/**
- * POST /video/caption_style
- * Add styled SRT subtitles to video
- * Returns immediately with jobId - result sent to webhook_url
- */
-router.post(
-  '/video/caption_style',
-  authenticateApiKey,
-  validateRequest(captionStyledRequestSchema),
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { webhook_url, id_roteiro, ...data }: CaptionStyledRequestAsync = req.body;
-
-      // Extract path_raiz from path
-      const pathRaiz = extractPathRaiz(data.path);
-
-      logger.info('🎨 Styled caption request received', {
-        urlVideo: data.url_video,
-        hasStyle: !!data.style,
-        idRoteiro: id_roteiro,
-        webhookUrl: webhook_url,
-        path: data.path,
-        pathRaiz: pathRaiz,
-        ip: req.ip
-      });
-
-      // Create job and enqueue (with pathRaiz)
-      const job = await jobService.createJob('caption', data, webhook_url, id_roteiro, pathRaiz);
-
-      logger.info('✅ Styled caption job created', {
-        jobId: job.jobId,
-        status: job.status,
-        pathRaiz: pathRaiz
-      });
-
-      res.status(202).json(job);
-
-    } catch (error) {
-      logger.error('❌ Styled caption job creation failed', {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
 

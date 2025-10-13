@@ -165,14 +165,13 @@ app.get('/', (_req, res) => {
     },
     endpoints: {
       sync: {
-        transcribe: 'POST /transcribe (synchronous transcription)'
+        transcribe: 'POST /gpu/transcribe (synchronous GPU transcription)'
       },
       async: {
-        img2vid: 'POST /video/img2vid (webhook_url required, id_roteiro optional)',
-        caption: 'POST /video/caption (webhook_url required, id_roteiro optional)',
-        addaudio: 'POST /video/addaudio (webhook_url required, id_roteiro optional)',
-        captionStyle: 'POST /caption_style (webhook_url required, type: segments|highlight)',
-        captionStyled: 'POST /video/caption_style (webhook_url required, with custom styling)'
+        img2vid: 'POST /gpu/video/img2vid (webhook_url required, id_roteiro optional)',
+        addaudio: 'POST /gpu/video/addaudio (webhook_url required, id_roteiro optional)',
+        concatenate: 'POST /gpu/video/concatenate (webhook_url required, id_roteiro optional)',
+        captionStyle: 'POST /gpu/video/caption_style (webhook_url required, type: segments|highlight)'
       },
       jobs: {
         status: 'GET /jobs/:jobId (check job status with progress)',
@@ -180,7 +179,8 @@ app.get('/', (_req, res) => {
         queueStats: 'GET /queue/stats (queue statistics)'
       },
       health: {
-        service: 'GET /health (includes queue stats)'
+        service: 'GET /health (includes queue stats)',
+        transcribe: 'GET /gpu/transcribe/health (transcription service health)'
       }
     },
     documentation: '/docs'
