@@ -105,6 +105,7 @@ const unifiedCaptionSchema = Joi.object({
       fundo_opacidade: Joi.number().min(0).max(100).default(50),
       fundo_arredondado: Joi.boolean().default(true),
       texto_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#FFFFFF'),
+      highlight_texto_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#FFFF00'),
       highlight_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#D60000'),
       highlight_borda: Joi.number().min(1).max(50).default(12),
       padding_horizontal: Joi.number().min(0).max(500).default(40),
@@ -195,6 +196,7 @@ router.post('/caption_style', authenticateApiKey, async (req: Request, res: Resp
       // Convert hex colors to RGB
       const fundoRgb = hexToRgb(style.fundo_cor);
       const textoRgb = hexToRgb(style.texto_cor);
+      const highlightTextoRgb = hexToRgb(style.highlight_texto_cor);
       const highlightRgb = hexToRgb(style.highlight_cor);
 
       // Convert opacity from 0-100% to 0-255
@@ -217,6 +219,9 @@ router.post('/caption_style', authenticateApiKey, async (req: Request, res: Resp
           texto_cor_r: textoRgb.r,
           texto_cor_g: textoRgb.g,
           texto_cor_b: textoRgb.b,
+          highlight_texto_cor_r: highlightTextoRgb.r,
+          highlight_texto_cor_g: highlightTextoRgb.g,
+          highlight_texto_cor_b: highlightTextoRgb.b,
           highlight_cor_r: highlightRgb.r,
           highlight_cor_g: highlightRgb.g,
           highlight_cor_b: highlightRgb.b,

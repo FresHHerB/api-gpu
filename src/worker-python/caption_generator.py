@@ -367,6 +367,10 @@ def generate_ass_highlight(
     text_g = style.get('texto_cor_g', 255)
     text_b = style.get('texto_cor_b', 255)
 
+    highlight_text_r = style.get('highlight_texto_cor_r', 255)
+    highlight_text_g = style.get('highlight_texto_cor_g', 255)
+    highlight_text_b = style.get('highlight_texto_cor_b', 0)
+
     highlight_r = style.get('highlight_cor_r', 214)
     highlight_g = style.get('highlight_cor_g', 0)
     highlight_b = style.get('highlight_cor_b', 0)
@@ -379,6 +383,7 @@ def generate_ass_highlight(
 
     # Convert colors to ASS format
     text_color = rgb_to_ass_color(text_r, text_g, text_b)
+    highlight_text_color = rgb_to_ass_color(highlight_text_r, highlight_text_g, highlight_text_b)
     highlight_color = rgb_to_ass_color(highlight_r, highlight_g, highlight_b)
     bg_color = create_ass_bg_color(bg_r, bg_g, bg_b, bg_opacity)
 
@@ -500,8 +505,8 @@ def generate_ass_highlight(
                     word_text = word['word'].upper() if UPPERCASE else word['word']
 
                     if word_idx == active_idx:
-                        # Active word: use highlight style
-                        line_parts.append(f"{{\\r}}{{\\1c{text_color}\\3c{highlight_color}\\bord{highlight_border}}}{word_text}")
+                        # Active word: use highlight style with custom text color
+                        line_parts.append(f"{{\\r}}{{\\1c{highlight_text_color}\\3c{highlight_color}\\bord{highlight_border}}}{word_text}")
                     else:
                         # Inactive word: invisible
                         line_parts.append(f"{{\\alpha&HFF&}}{word_text}")
