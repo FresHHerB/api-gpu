@@ -36,6 +36,24 @@ const POSITION_MAP: Record<string, number> = {
 // ============================================
 
 /**
+ * Extract path_raiz from full path
+ * Example: "Mr. Nightmare/Video Title/videos/temp/" -> "Mr. Nightmare/Video Title/"
+ */
+function extractPathRaiz(path: string): string {
+  // Remove trailing slash
+  let cleanPath = path.endsWith('/') ? path.slice(0, -1) : path;
+
+  // Find the last occurrence of "/videos" and remove everything from there
+  const videosIndex = cleanPath.lastIndexOf('/videos');
+  if (videosIndex > 0) {
+    cleanPath = cleanPath.substring(0, videosIndex);
+  }
+
+  // Ensure it ends with /
+  return cleanPath.endsWith('/') ? cleanPath : cleanPath + '/';
+}
+
+/**
  * Convert hex color (#RRGGBB) to RGB components
  */
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -158,11 +176,16 @@ router.post('/caption_style', authenticateApiKey, async (req: Request, res: Resp
 
     const { webhook_url, id_roteiro, url_video, url_caption, path, output_filename, type, style } = value;
 
+    // Extract path_raiz from path
+    const pathRaiz = extractPathRaiz(path);
+
     logger.info('🎨 CaptionStyle request received', {
       type,
       urlVideo: url_video,
       idRoteiro: id_roteiro,
       webhookUrl: webhook_url,
+      path: path,
+      pathRaiz: pathRaiz,
       ip: req.ip
     });
 
@@ -235,14 +258,15 @@ router.post('/caption_style', authenticateApiKey, async (req: Request, res: Resp
       };
     }
 
-    // Create job and enqueue
-    const job = await jobService.createJob(operation, jobData, webhook_url, id_roteiro);
+    // Create job and enqueue (with pathRaiz)
+    const job = await jobService.createJob(operation, jobData, webhook_url, id_roteiro, pathRaiz);
 
     logger.info('✅ CaptionStyle job created', {
       jobId: job.jobId,
       status: job.status,
       type,
-      operation
+      operation,
+      pathRaiz: pathRaiz
     });
 
     return res.status(202).json(job);
