@@ -167,13 +167,25 @@ export class WorkerMonitor {
       }
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
       logger.error(`❌ Error polling job ${job.jobId}`, {
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: errorMessage
       });
 
-      // Se erro 404, marcar como falho
-      if (error instanceof Error && error.message.includes('404')) {
-        await this.handleJobFailed(job, [], 'Job not found in RunPod');
+      // Detectar jobs órfãos (não existem mais no RunPod)
+      // Isso acontece quando o endpoint é recriado e jobs antigos ficam no Redis
+      if (error instanceof Error && (
+        error.message.includes('404') ||
+        error.message.includes('not found') ||
+        error.message.includes('does not exist') ||
+        error.message.includes('request does not exist')
+      )) {
+        logger.warn(`🗑️ Orphaned job detected, marking as FAILED`, {
+          jobId: job.jobId,
+          reason: 'Job no longer exists in RunPod (likely from old endpoint)'
+        });
+        await this.handleJobFailed(job, [], `Orphaned job: ${errorMessage}`);
       }
     }
   }
