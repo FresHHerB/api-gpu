@@ -95,7 +95,7 @@ export class LocalVideoProcessor {
           logger.info('[LocalVideoProcessor] FFmpeg completed successfully');
           resolve();
         } else {
-          logger.error('[LocalVideoProcessor] FFmpeg failed', { code, stderr });
+          logger.error('[LocalVideoProcessor] FFmpeg failed', { code, stderr: stderr.slice(-500) });
           reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
         }
       });
@@ -103,6 +103,112 @@ export class LocalVideoProcessor {
       ffmpeg.on('error', (error) => {
         logger.error('[LocalVideoProcessor] FFmpeg spawn error', { error: error.message });
         reject(error);
+      });
+    });
+  }
+
+  /**
+   * Execute FFmpeg command with optimized environment
+   */
+  private async executeFFmpegWithEnv(args: string[]): Promise<void> {
+    return new Promise((resolve, reject) => {
+      logger.info('[LocalVideoProcessor] Executing FFmpeg (optimized)', { args: args.join(' ') });
+
+      // Optimized environment - use tmpfs for temp files
+      const ffmpegEnv = {
+        ...process.env,
+        TMPDIR: '/tmp',
+        TEMP: '/tmp',
+        TMP: '/tmp'
+      };
+
+      const ffmpeg = spawn('ffmpeg', args, { env: ffmpegEnv });
+      let stderr = '';
+
+      ffmpeg.stderr.on('data', (data) => {
+        stderr += data.toString();
+
+        // Parse progress for better visibility
+        const output = data.toString();
+        if (output.includes('frame=') && output.includes('time=')) {
+          const frameMatch = output.match(/frame=\s*(\d+)/);
+          const timeMatch = output.match(/time=(\d{2}:\d{2}:\d{2}\.\d{2})/);
+          const speedMatch = output.match(/speed=\s*([\d.]+)x/);
+
+          if (frameMatch && timeMatch) {
+            logger.debug(`[LocalVideoProcessor] Progress: frame=${frameMatch[1]}, time=${timeMatch[1]}, speed=${speedMatch ? speedMatch[1] : 'N/A'}x`);
+          }
+        }
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0) {
+          logger.info('[LocalVideoProcessor] FFmpeg completed successfully');
+          resolve();
+        } else {
+          logger.error('[LocalVideoProcessor] FFmpeg failed', { code, stderr: stderr.slice(-500) });
+          reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+        }
+      });
+
+      ffmpeg.on('error', (error) => {
+        logger.error('[LocalVideoProcessor] FFmpeg spawn error', { error: error.message });
+        reject(error);
+      });
+    });
+  }
+
+  /**
+   * Get image metadata using ffprobe
+   */
+  private async getImageMetadata(imagePath: string): Promise<{ width: number; height: number } | null> {
+    return new Promise((resolve) => {
+      const ffprobe = spawn('ffprobe', [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_streams',
+        imagePath
+      ]);
+
+      let output = '';
+
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      ffprobe.on('close', (code) => {
+        if (code === 0) {
+          try {
+            const metadata = JSON.parse(output);
+            const imageStream = metadata.streams?.find((s: any) => s.codec_type === 'video');
+
+            if (imageStream && imageStream.width && imageStream.height) {
+              logger.info('[LocalVideoProcessor] Image metadata extracted', {
+                width: imageStream.width,
+                height: imageStream.height,
+                path: imagePath
+              });
+              resolve({ width: imageStream.width, height: imageStream.height });
+            } else {
+              logger.warn('[LocalVideoProcessor] Could not extract image dimensions', { imagePath });
+              resolve(null);
+            }
+          } catch (error) {
+            logger.warn('[LocalVideoProcessor] Failed to parse image metadata', {
+              error: error instanceof Error ? error.message : 'Unknown error',
+              imagePath
+            });
+            resolve(null);
+          }
+        } else {
+          logger.warn('[LocalVideoProcessor] FFprobe failed, using default dimensions', { imagePath, code });
+          resolve(null);
+        }
+      });
+
+      ffprobe.on('error', (error) => {
+        logger.warn('[LocalVideoProcessor] FFprobe spawn error', { error: error.message, imagePath });
+        resolve(null);
       });
     });
   }
@@ -238,6 +344,7 @@ export class LocalVideoProcessor {
 
   /**
    * Process Img2Vid
+   * Fixed based on api-transcricao working implementation
    */
   async processImg2Vid(data: any): Promise<{ videos: any[]; pathRaiz?: string }> {
     const jobId = randomUUID();
@@ -250,33 +357,77 @@ export class LocalVideoProcessor {
       const results = [];
 
       for (const image of data.images) {
+        logger.info('[LocalVideoProcessor] Processing image', {
+          jobId,
+          imageId: image.id,
+          duration: image.duracao
+        });
+
         const imgPath = path.join(workPath, `${image.id}.jpg`);
         const outputPath = path.join(workPath, `video_${image.id}.mp4`);
 
         // Download image
         await this.downloadFile(image.image_url, imgPath);
 
-        // Create video with Ken Burns effect (CPU)
-        const fps = 24;
-        const frames = Math.round(image.duracao * fps);
+        // Get image metadata for optimal upscaling
+        const imageMetadata = await this.getImageMetadata(imgPath);
 
+        // Ken Burns parameters
+        const fps = 24;
+        const totalFrames = Math.round(image.duracao * fps);
+
+        // Upscale 6x for smooth zoom (prevent pixelation)
+        const upscaleFactor = 6;
+        const upscaleWidth = imageMetadata ? imageMetadata.width * upscaleFactor : 6720;
+        const upscaleHeight = imageMetadata ? imageMetadata.height * upscaleFactor : 3840;
+
+        // Zoom parameters (1.0 → 1.324 = 32.4% zoom)
+        const zoomStart = 1.0;
+        const zoomEnd = 1.324;
+        const zoomDiff = zoomEnd - zoomStart;
+
+        // Build video filter in 3 stages (CRITICAL ORDER)
+        const videoFilter = [
+          // Stage 1: Upscale image for smooth zoom
+          `scale=${upscaleWidth}:${upscaleHeight}:flags=lanczos`,
+
+          // Stage 2: Apply controlled zoom (min prevents over-zooming)
+          `zoompan=z='min(${zoomStart}+${zoomDiff}*on/${totalFrames}, ${zoomEnd})':d=${totalFrames}:x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':s=1920x1080:fps=${fps}`,
+
+          // Stage 3: Ensure proper pixel format
+          'format=yuv420p'
+        ].join(',');
+
+        // FFmpeg args (FIXED ORDER: framerate MUST come before loop)
         const ffmpegArgs = [
+          '-framerate', fps.toString(), // CRITICAL: Must be before -loop
           '-loop', '1',
           '-i', imgPath,
-          '-vf', `scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,zoompan=z='zoom+0.0015':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=1920x1080:fps=${fps}`,
+          '-vf', videoFilter,
           '-c:v', 'libx264',
-          '-preset', 'medium',
+          '-preset', 'ultrafast', // Faster than 'medium', good quality
           '-crf', '23',
+          '-threads', '2', // Optimize for VPS (2 vCPU cores)
           '-t', String(image.duracao),
-          '-pix_fmt', 'yuv420p',
+          '-max_muxing_queue_size', '1024', // Prevent buffer overflow
           '-movflags', '+faststart',
           '-y',
           outputPath
         ];
 
-        await this.executeFFmpeg(ffmpegArgs);
+        logger.info('[LocalVideoProcessor] FFmpeg parameters', {
+          jobId,
+          imageId: image.id,
+          upscale: `${upscaleWidth}x${upscaleHeight}`,
+          zoom: `${zoomStart} → ${zoomEnd}`,
+          frames: totalFrames,
+          duration: image.duracao
+        });
 
-        // Upload
+        // Execute with optimized environment (tmpfs)
+        await this.executeFFmpegWithEnv(ffmpegArgs);
+
+        // Upload to S3
         const videoBuffer = await fs.readFile(outputPath);
         const filename = `video_${image.id}.mp4`;
         const videoUrl = await this.s3Service.uploadFile(
@@ -291,15 +442,30 @@ export class LocalVideoProcessor {
           video_url: videoUrl,
           filename
         });
+
+        logger.info('[LocalVideoProcessor] Image processed successfully', {
+          jobId,
+          imageId: image.id,
+          videoUrl
+        });
       }
 
       const pathRaiz = this.extractPathRaiz(data.path);
 
       await fs.rm(workPath, { recursive: true, force: true });
 
+      logger.info('[LocalVideoProcessor] Img2vid completed', {
+        jobId,
+        totalVideos: results.length
+      });
+
       return { videos: results, pathRaiz };
 
     } catch (error: any) {
+      logger.error('[LocalVideoProcessor] Img2vid failed', {
+        jobId,
+        error: error.message
+      });
       await fs.rm(workPath, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
