@@ -5,6 +5,7 @@ import { logger } from '../../shared/utils/logger';
 import { LocalS3UploadService } from '../services/localS3Upload';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
+import { generateASSFromSRT as generateSegmentASS, generateASSHighlight } from './captionGenerator';
 
 // ============================================
 // Local Video Processor (VPS CPU-based)
@@ -877,36 +878,18 @@ export class LocalVideoProcessor {
 
   /**
    * Generate ASS file from SRT with styles
+   * Uses captionGenerator module for full ASS generation with custom styling
    */
-  private async generateASSFromSRT(srtPath: string, assPath: string, _style: any): Promise<void> {
-    // TODO: Implement SRT to ASS conversion with styling
-    // For now, copy SRT as ASS (FFmpeg will handle basic conversion)
-    const srtContent = await fs.readFile(srtPath, 'utf-8');
-    await fs.writeFile(assPath, srtContent);
-    logger.info('[LocalVideoProcessor] Generated ASS from SRT', { assPath });
+  private async generateASSFromSRT(srtPath: string, assPath: string, style: any): Promise<void> {
+    await generateSegmentASS(srtPath, assPath, style);
   }
 
   /**
    * Generate ASS karaoke file from words JSON
+   * Uses captionGenerator module for full highlight ASS generation with word-by-word timing
    */
-  private async generateASSKaraoke(_wordsPath: string, assPath: string, _style: any): Promise<void> {
-    // TODO: Implement words JSON to ASS karaoke conversion
-    // This requires the same logic as the Python worker's caption_generator.py
-    logger.warn('[LocalVideoProcessor] ASS karaoke generation not fully implemented yet');
-
-    // Placeholder: create empty ASS
-    const assHeader = `[Script Info]
-Title: Karaoke Subtitles
-ScriptType: v4.00+
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,72,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`;
-    await fs.writeFile(assPath, assHeader);
+  private async generateASSKaraoke(wordsPath: string, assPath: string, style: any): Promise<void> {
+    await generateASSHighlight(wordsPath, assPath, style);
   }
 
   /**
