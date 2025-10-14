@@ -72,6 +72,17 @@ export class QueueManager {
         return;
       }
 
+      // Skip VPS jobs - they are handled by LocalWorkerService
+      if (this.isVPSJob(job.operation)) {
+        // Re-enqueue for LocalWorkerService to pick up
+        await this.storage.enqueueJob(jobId);
+        logger.debug('🔄 VPS job detected, skipping QueueManager (LocalWorkerService will handle)', {
+          jobId,
+          operation: job.operation
+        });
+        return;
+      }
+
       // Calcular workers necessários
       const workersNeeded = this.calculateWorkersNeeded(job);
 
@@ -225,6 +236,13 @@ export class QueueManager {
    */
   async getStats(): Promise<QueueStats> {
     return await this.storage.getQueueStats();
+  }
+
+  /**
+   * Verifica se job é VPS (processado localmente)
+   */
+  private isVPSJob(operation: string): boolean {
+    return operation.includes('_vps');
   }
 
   /**
