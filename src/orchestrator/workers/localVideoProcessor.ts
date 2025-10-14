@@ -66,6 +66,49 @@ export class LocalVideoProcessor {
   }
 
   /**
+   * Distribute zoom types proportionally and randomly across images
+   * Same logic as GPU worker's distribute_zoom_types()
+   */
+  private distributeZoomTypes(zoomTypes: string[], imageCount: number): string[] {
+    if (!zoomTypes || zoomTypes.length === 0 || imageCount === 0) {
+      return Array(imageCount).fill('zoomin'); // Default fallback
+    }
+
+    // Calculate proportional distribution
+    const typesCount = zoomTypes.length;
+    const baseCount = Math.floor(imageCount / typesCount);
+    const remainder = imageCount % typesCount;
+
+    // Build distribution list
+    const distribution: string[] = [];
+    for (let i = 0; i < zoomTypes.length; i++) {
+      const zoomType = zoomTypes[i];
+      // Each type gets baseCount + 1 extra if remainder available
+      const count = baseCount + (i < remainder ? 1 : 0);
+      for (let j = 0; j < count; j++) {
+        distribution.push(zoomType);
+      }
+    }
+
+    // Shuffle to randomize order (proportional but random)
+    for (let i = distribution.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [distribution[i], distribution[j]] = [distribution[j], distribution[i]];
+    }
+
+    logger.info('[LocalVideoProcessor] Zoom distribution', {
+      zoomTypes,
+      imageCount,
+      distribution: distribution.reduce((acc, type) => {
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)
+    });
+
+    return distribution;
+  }
+
+  /**
    * Download file from URL to local disk
    */
   private async downloadFile(url: string, dest: string): Promise<void> {
@@ -458,6 +501,7 @@ export class LocalVideoProcessor {
   /**
    * Process Img2Vid
    * Fixed based on api-transcricao working implementation
+   * Supports zoom_types: zoomin, zoomout, zoompanright
    */
   async processImg2Vid(data: any): Promise<{ videos: any[]; pathRaiz?: string }> {
     const jobId = randomUUID();
@@ -465,10 +509,18 @@ export class LocalVideoProcessor {
     await fs.mkdir(workPath, { recursive: true });
 
     try {
+      // Read zoom_types from payload (default: ['zoomin'])
+      const zoomTypes = data.zoom_types || ['zoomin'];
+      const imageCount = data.images.length;
+
+      // Distribute zoom types proportionally and randomly
+      const zoomDistribution = this.distributeZoomTypes(zoomTypes, imageCount);
+
       logger.info('[LocalVideoProcessor] Processing img2vid', {
         jobId,
-        count: data.images.length,
+        count: imageCount,
         path: data.path,
+        zoomTypes,
         images: data.images.map((img: any) => ({ id: img.id, url: img.image_url, duration: img.duracao }))
       });
 
@@ -476,11 +528,13 @@ export class LocalVideoProcessor {
 
       for (let i = 0; i < data.images.length; i++) {
         const image = data.images[i];
+        const zoomType = zoomDistribution[i]; // Get zoom type for this image
         logger.info(`[LocalVideoProcessor] Processing image ${i + 1}/${data.images.length}`, {
           jobId,
           imageId: image.id,
           imageUrl: image.image_url,
-          duration: image.duracao
+          duration: image.duracao,
+          zoomType
         });
 
         const imgPath = path.join(workPath, `${image.id}.jpg`);
@@ -522,29 +576,71 @@ export class LocalVideoProcessor {
           metadata: imageMetadata
         });
 
-        // Ken Burns parameters
+        // Ken Burns parameters - Professional anti-jitter based on FFmpeg best practices
         const fps = 24;
         const totalFrames = Math.round(image.duracao * fps);
 
-        // Upscale 6x for smooth zoom (prevent pixelation)
-        const upscaleFactor = 6;
-        const upscaleWidth = imageMetadata ? imageMetadata.width * upscaleFactor : 6720;
-        const upscaleHeight = imageMetadata ? imageMetadata.height * upscaleFactor : 3840;
+        // Upscale 10x for smooth zoom (same as GPU worker for maximum precision)
+        const upscaleFactor = 10;
+        const upscaleWidth = imageMetadata ? imageMetadata.width * upscaleFactor : 19200;
+        const upscaleHeight = imageMetadata ? imageMetadata.height * upscaleFactor : 10800;
 
-        // Zoom parameters (1.0 → 1.324 = 32.4% zoom)
-        const zoomStart = 1.0;
-        const zoomEnd = 1.324;
-        const zoomDiff = zoomEnd - zoomStart;
+        // Define zoom effect based on type (SAME AS GPU WORKER)
+        // CRITICAL: NO trunc() - causes jitter due to rounding
+        // Use continuous float values for smooth sub-pixel motion
+        let zoomFormula: string;
+        let xFormula: string;
+        let yFormula: string;
 
-        // Build video filter in 3 stages (CRITICAL ORDER)
+        if (zoomType === 'zoomout') {
+          // ZOOM OUT: Starts zoomed in, ends normal
+          const zoomStart = 1.25;
+          const zoomEnd = 1.0;
+          const zoomDiff = zoomStart - zoomEnd;
+          zoomFormula = `max(${zoomStart}-${zoomDiff}*on/${totalFrames},${zoomEnd})`;
+          // Centered - no trunc() for smooth motion
+          xFormula = 'iw/2-(iw/zoom/2)';
+          yFormula = 'ih/2-(ih/zoom/2)';
+
+        } else if (zoomType === 'zoompanright') {
+          // ZOOM IN + PAN RIGHT
+          // Starts at left (x=0), ends at right (x=x_max)
+          const zoomStart = 1.0;
+          const zoomEnd = 1.25;
+          const zoomDiff = zoomEnd - zoomStart;
+          zoomFormula = `min(${zoomStart}+${zoomDiff}*on/${totalFrames},${zoomEnd})`;
+
+          // Pan from left to right
+          // x: 0 → (iw - ow/zoom)
+          // Linear motion: progress × max_distance
+          xFormula = `(iw-ow/zoom)*on/${totalFrames}`;
+
+          // Centered vertically
+          yFormula = 'ih/2-(ih/zoom/2)';
+
+        } else {
+          // ZOOM IN (default): Starts normal, ends zoomed in
+          const zoomStart = 1.0;
+          const zoomEnd = 1.25;
+          const zoomDiff = zoomEnd - zoomStart;
+          zoomFormula = `min(${zoomStart}+${zoomDiff}*on/${totalFrames},${zoomEnd})`;
+          // Centered - no trunc() for smooth motion
+          xFormula = 'iw/2-(iw/zoom/2)';
+          yFormula = 'ih/2-(ih/zoom/2)';
+        }
+
+        // Build video filter - Bicubic downscaling for best quality (SAME AS GPU WORKER)
         const videoFilter = [
           // Stage 1: Upscale image for smooth zoom
           `scale=${upscaleWidth}:${upscaleHeight}:flags=lanczos`,
 
-          // Stage 2: Apply controlled zoom (min prevents over-zooming)
-          `zoompan=z='min(${zoomStart}+${zoomDiff}*on/${totalFrames}, ${zoomEnd})':d=${totalFrames}:x='trunc(iw/2-(iw/zoom/2))':y='trunc(ih/2-(ih/zoom/2))':s=1920x1080:fps=${fps}`,
+          // Stage 2: Apply zoom effect with smooth sub-pixel motion
+          `zoompan=z='${zoomFormula}':d=${totalFrames}:x='${xFormula}':y='${yFormula}':s=1920x1080:fps=${fps}`,
 
-          // Stage 3: Ensure proper pixel format
+          // Stage 3: Final downscale with bicubic for smoothness
+          'scale=1920:1080:flags=bicubic',
+
+          // Stage 4: Ensure proper pixel format
           'format=yuv420p'
         ].join(',');
 
@@ -568,8 +664,8 @@ export class LocalVideoProcessor {
         logger.info('[LocalVideoProcessor] Step 3: Running FFmpeg', {
           jobId,
           imageId: image.id,
+          zoomType,
           upscale: `${upscaleWidth}x${upscaleHeight}`,
-          zoom: `${zoomStart} → ${zoomEnd}`,
           frames: totalFrames,
           duration: image.duracao,
           command: `ffmpeg ${ffmpegArgs.join(' ')}`
