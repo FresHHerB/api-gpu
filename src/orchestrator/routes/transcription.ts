@@ -7,6 +7,7 @@ import {
 import { RunPodWhisperService } from '../services/runpodWhisperService';
 import { TranscriptionFormatter } from '../services/transcriptionFormatter';
 import { S3UploadService } from '../services/s3Upload';
+import { logger } from '../../shared/utils/logger';
 
 const router = Router();
 
@@ -29,10 +30,34 @@ function getS3Service(): S3UploadService {
 }
 
 // ============================================
-// POST /gpu/transcribe
+// Middleware: API Key Authentication
+// ============================================
+
+const authenticateApiKey = (req: Request, res: Response, next: Function): void => {
+  const apiKey = req.get('X-API-Key');
+  const expectedKey = process.env.X_API_KEY;
+
+  if (!apiKey || apiKey !== expectedKey) {
+    logger.warn('Unauthorized request - invalid API key', {
+      ip: req.ip,
+      path: req.path
+    });
+
+    res.status(401).json({
+      error: 'Unauthorized',
+      message: 'Invalid or missing API key'
+    });
+    return;
+  }
+
+  next();
+};
+
+// ============================================
+// POST /gpu/audio/transcribe
 // Process audio transcription with RunPod faster-whisper
 // ============================================
-router.post('/gpu/transcribe', async (req: Request, res: Response) => {
+router.post('/gpu/audio/transcribe', authenticateApiKey, async (req: Request, res: Response) => {
   const startTime = new Date();
   const jobId = randomUUID();
 
@@ -191,10 +216,10 @@ router.post('/gpu/transcribe', async (req: Request, res: Response) => {
 });
 
 // ============================================
-// GET /gpu/transcribe/health
+// GET /gpu/audio/transcribe/health
 // Health check for transcription service
 // ============================================
-router.get('/gpu/transcribe/health', async (_req: Request, res: Response) => {
+router.get('/gpu/audio/transcribe/health', async (_req: Request, res: Response) => {
   try {
     const whisperHealth = await getWhisperService().healthCheck();
 

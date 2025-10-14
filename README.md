@@ -32,7 +32,7 @@ Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod 
 
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
-| `/gpu/transcribe` | POST | Transcrição com Whisper → SRT/ASS/JSON |
+| `/gpu/audio/transcribe` | POST | Transcrição com Whisper → SRT/ASS/JSON |
 | `/gpu/video/caption_style` | POST | Legendas estilizadas unificadas (type: segments\|highlight) |
 | `/gpu/video/img2vid` | POST | Imagem para vídeo com Ken Burns |
 | `/gpu/video/addaudio` | POST | Adicionar/substituir áudio |
@@ -43,7 +43,7 @@ Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod 
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
 | `/health` | GET | Orchestrator health + queue stats |
-| `/gpu/transcribe/health` | GET | Transcription service health |
+| `/gpu/audio/transcribe/health` | GET | Transcription service health |
 | `/jobs/:jobId` | GET | Consultar status de job |
 | `/jobs/:jobId/cancel` | POST | Cancelar job em execução |
 | `/queue/stats` | GET | Estatísticas da fila |
@@ -158,8 +158,9 @@ npm run start:orchestrator
 ### Transcrição de Áudio
 
 ```bash
-curl -X POST https://your-api.com/gpu/transcribe \
+curl -X POST https://your-api.com/gpu/audio/transcribe \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
   -d '{
     "audio_url": "https://example.com/audio.mp3",
     "path": "Project/Episode01/transcriptions/",
@@ -358,7 +359,7 @@ Ver [Deployment Guide](docs/DEPLOYMENT.md) para detalhes completos.
 curl https://your-api.com/health
 
 # Transcription Service
-curl https://your-api.com/gpu/transcribe/health
+curl https://your-api.com/gpu/audio/transcribe/health
 
 # Job Status
 curl https://your-api.com/jobs/{jobId} \

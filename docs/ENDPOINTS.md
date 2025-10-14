@@ -14,8 +14,8 @@ Guia conciso de todos os endpoints da API GPU v3.0.0
 | `/gpu/video/concatenate` | POST | ✅ | Async | ✅ | Concatena múltiplos vídeos |
 | `/gpu/video/caption_style` | POST | ✅ | Async | ✅ | Legendas estilizadas (segments ou highlight) |
 | **GPU - TRANSCRIPTION** |
-| `/gpu/transcribe` | POST | ❌ | Sync | ✅ | Transcrição de áudio com Whisper |
-| `/gpu/transcribe/health` | GET | ❌ | Sync | ❌ | Health check do serviço de transcrição |
+| `/gpu/audio/transcribe` | POST | ✅ | Sync | ✅ | Transcrição de áudio com Whisper |
+| `/gpu/audio/transcribe/health` | GET | ❌ | Sync | ❌ | Health check do serviço de transcrição |
 | **JOB MANAGEMENT** |
 | `/jobs/:jobId` | GET | ✅ | Sync | ❌ | Consultar status de job |
 | `/jobs/:jobId/cancel` | POST | ✅ | Sync | ❌ | Cancelar job em execução |
@@ -76,8 +76,9 @@ Todos os endpoints `/gpu/video/*` requerem `webhook_url` e retornam imediatament
 
 ### Transcrição (Síncrono)
 ```bash
-curl -X POST "https://api.example.com/gpu/transcribe" \
+curl -X POST "https://api.example.com/gpu/audio/transcribe" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-key" \
   -d '{
     "audio_url": "https://cdn.example.com/audio.mp3",
     "path": "Project/Episode01/",

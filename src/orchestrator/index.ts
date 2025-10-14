@@ -165,7 +165,7 @@ app.get('/', (_req, res) => {
     },
     endpoints: {
       sync: {
-        transcribe: 'POST /gpu/transcribe (synchronous GPU transcription)'
+        transcribe: 'POST /gpu/audio/transcribe (synchronous GPU transcription, requires X-API-Key)'
       },
       async: {
         img2vid: 'POST /gpu/video/img2vid (webhook_url required, id_roteiro optional)',
@@ -180,7 +180,7 @@ app.get('/', (_req, res) => {
       },
       health: {
         service: 'GET /health (includes queue stats)',
-        transcribe: 'GET /gpu/transcribe/health (transcription service health)'
+        transcribe: 'GET /gpu/audio/transcribe/health (transcription service health)'
       }
     },
     documentation: '/docs'

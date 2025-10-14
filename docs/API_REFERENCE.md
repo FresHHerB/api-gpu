@@ -20,7 +20,7 @@ X_API_KEY=your-secure-api-key
 ## 📋 Índice
 
 - [Endpoints GPU](#endpoints-gpu)
-  - [Transcription](#post-gputranscribe)
+  - [Transcription](#post-gpuaudiotranscribe)
   - [Caption Style](#post-gpuvideocaption_style)
   - [Image to Video](#post-gpuvideoimg2vid)
   - [Add Audio](#post-gpuvideoaddaudio)
@@ -37,11 +37,12 @@ X_API_KEY=your-secure-api-key
 
 Todos os endpoints GPU usam o prefixo `/gpu/` e suportam aceleração por hardware via NVENC.
 
-### POST /gpu/transcribe
+### POST /gpu/audio/transcribe
 
 Transcreve áudio para texto usando Whisper com GPU e gera legendas em múltiplos formatos.
 
 **Tipo:** Síncrono (aguarda conclusão)
+**Auth:** Required
 
 **Request:**
 ```json
@@ -113,8 +114,9 @@ Transcreve áudio para texto usando Whisper com GPU e gera legendas em múltiplo
 
 **Exemplo cURL:**
 ```bash
-curl -X POST "https://api.example.com/gpu/transcribe" \
+curl -X POST "https://api.example.com/gpu/audio/transcribe" \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: your-api-key" \
   -d '{
     "audio_url": "https://cdn.example.com/podcast-episode-01.mp3",
     "path": "MyPodcast/Season01/Episode01/transcriptions/",
@@ -596,7 +598,7 @@ Health check geral do orchestrator (sem autenticação).
 
 ---
 
-### GET /gpu/transcribe/health
+### GET /gpu/audio/transcribe/health
 
 Health check do serviço de transcrição (sem autenticação).
 
