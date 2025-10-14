@@ -2,7 +2,7 @@
 
 ## Visão Geral
 
-O endpoint `/video/concatenate` permite concatenar múltiplos vídeos em um único arquivo de saída, utilizando aceleração por GPU quando disponível.
+O endpoint `/gpu/video/concatenate` permite concatenar múltiplos vídeos em um único arquivo de saída, utilizando aceleração por GPU via NVENC.
 
 ## Características
 
@@ -16,7 +16,7 @@ O endpoint `/video/concatenate` permite concatenar múltiplos vídeos em um úni
 ## Endpoint
 
 ```
-POST /video/concatenate
+POST /gpu/video/concatenate
 ```
 
 ### Headers
@@ -154,7 +154,7 @@ Content-Type: application/json
 ### Exemplo 1: Concatenar 2 vídeos
 
 ```bash
-curl -X POST "http://localhost:3000/video/concatenate" \
+curl -X POST "http://localhost:3000/gpu/video/concatenate" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
@@ -172,7 +172,7 @@ curl -X POST "http://localhost:3000/video/concatenate" \
 ### Exemplo 2: Concatenar múltiplos vídeos
 
 ```bash
-curl -X POST "http://localhost:3000/video/concatenate" \
+curl -X POST "http://localhost:3000/gpu/video/concatenate" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{

@@ -28,19 +28,27 @@ Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod 
 
 ## 📑 Endpoints
 
+### GPU-Accelerated Endpoints
+
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
-| `/transcribe` | POST | Transcrição com Whisper → SRT/ASS/JSON |
-| `/caption_style` | POST | Legendas estilizadas unificadas (type: segments\|highlight) |
-| `/video/caption` | POST | Legendas básicas SRT (legacy) |
-| `/video/img2vid` | POST | Imagem para vídeo com Ken Burns |
-| `/video/addaudio` | POST | Adicionar/substituir áudio |
+| `/gpu/transcribe` | POST | Transcrição com Whisper → SRT/ASS/JSON |
+| `/gpu/video/caption_style` | POST | Legendas estilizadas unificadas (type: segments\|highlight) |
+| `/gpu/video/img2vid` | POST | Imagem para vídeo com Ken Burns |
+| `/gpu/video/addaudio` | POST | Adicionar/substituir áudio |
+| `/gpu/video/concatenate` | POST | Concatenar múltiplos vídeos |
 
-**Health Checks:**
-- `GET /health` - Orchestrator health
-- `GET /transcribe/health` - Transcription service health
-- `GET /caption_style/health` - Caption style service health
-- `GET /runpod/health` - RunPod endpoint status
+### Management & Health
+
+| Endpoint | Método | Descrição |
+|----------|--------|-----------|
+| `/health` | GET | Orchestrator health + queue stats |
+| `/gpu/transcribe/health` | GET | Transcription service health |
+| `/jobs/:jobId` | GET | Consultar status de job |
+| `/jobs/:jobId/cancel` | POST | Cancelar job em execução |
+| `/queue/stats` | GET | Estatísticas da fila |
+
+📘 **[Ver documentação completa](docs/API_REFERENCE.md)** | **[Guia de Deploy](docs/DEPLOYMENT.md)**
 
 ---
 
@@ -150,9 +158,8 @@ npm run start:orchestrator
 ### Transcrição de Áudio
 
 ```bash
-curl -X POST https://your-api.com/transcribe \
+curl -X POST https://your-api.com/gpu/transcribe \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
   -d '{
     "audio_url": "https://example.com/audio.mp3",
     "path": "Project/Episode01/transcriptions/",
@@ -181,10 +188,12 @@ curl -X POST https://your-api.com/transcribe \
 ### Legendas Estilizadas (Segments Mode)
 
 ```bash
-curl -X POST https://your-api.com/caption_style \
+curl -X POST https://your-api.com/gpu/video/caption_style \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
+    "webhook_url": "https://your-webhook.com/callback",
+    "id_roteiro": 123,
     "url_video": "https://example.com/video.mp4",
     "url_caption": "https://s3.../subtitles.srt",
     "path": "Project/final/",
@@ -203,16 +212,19 @@ curl -X POST https://your-api.com/caption_style \
 ### Legendas Karaoke (Highlight Mode)
 
 ```bash
-curl -X POST https://your-api.com/caption_style \
+curl -X POST https://your-api.com/gpu/video/caption_style \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
+    "webhook_url": "https://your-webhook.com/callback",
+    "id_roteiro": 124,
     "url_video": "https://example.com/video.mp4",
     "url_caption": "https://s3.../words.json",
     "path": "Project/karaoke/",
     "output_filename": "video_karaoke.mp4",
     "type": "highlight",
     "style": {
+      "highlight_texto_cor": "#FFFF00",
       "highlight_cor": "#00FF00",
       "fundo_opacidade": 70,
       "words_per_line": 3
@@ -225,10 +237,12 @@ curl -X POST https://your-api.com/caption_style \
 ### Imagem para Vídeo
 
 ```bash
-curl -X POST https://your-api.com/video/img2vid \
+curl -X POST https://your-api.com/gpu/video/img2vid \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
+    "webhook_url": "https://your-webhook.com/callback",
+    "id_roteiro": 125,
     "images": [
       {"id": "img-1", "image_url": "https://example.com/photo1.jpg", "duracao": 6.48},
       {"id": "img-2", "image_url": "https://example.com/photo2.jpg", "duracao": 5.0}
@@ -340,17 +354,19 @@ Ver [Deployment Guide](docs/DEPLOYMENT.md) para detalhes completos.
 ## 🔍 Health Monitoring
 
 ```bash
-# Orchestrator
+# Orchestrator + Queue Stats
 curl https://your-api.com/health
 
-# RunPod
-curl https://your-api.com/runpod/health
+# Transcription Service
+curl https://your-api.com/gpu/transcribe/health
 
-# Transcription
-curl https://your-api.com/transcribe/health
+# Job Status
+curl https://your-api.com/jobs/{jobId} \
+  -H "X-API-Key: your-api-key"
 
-# Caption Style
-curl https://your-api.com/caption_style/health
+# Queue Statistics
+curl https://your-api.com/queue/stats \
+  -H "X-API-Key: your-api-key"
 ```
 
 ---
