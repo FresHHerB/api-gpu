@@ -229,14 +229,17 @@ export class LocalWorkerService {
         idRoteiro: job.idRoteiro,
         pathRaiz: job.pathRaiz,
         status,
-        operation: job.operation.replace('_vps', '') as any, // Remove _vps suffix for response
+        operation: job.operation.replace('_vps', '') as any, // Base operation name
+        processor: 'VPS' as const, // Indicate VPS (CPU) processing
         result: status === 'COMPLETED' ? result : undefined,
         error: status === 'FAILED' ? error : undefined,
         execution: {
           startTime: startTime.toISOString(),
           endTime: endTime.toISOString(),
           durationMs,
-          durationSeconds: Math.round(durationMs / 1000)
+          durationSeconds: Math.round(durationMs / 1000),
+          worker: 'LocalWorkerService',
+          codec: 'libx264' // CPU encoding
         }
       };
 
@@ -244,7 +247,8 @@ export class LocalWorkerService {
 
       logger.info('[LocalWorkerService] Webhook sent', {
         jobId: job.jobId,
-        status
+        status,
+        processor: 'VPS'
       });
 
     } catch (error: any) {

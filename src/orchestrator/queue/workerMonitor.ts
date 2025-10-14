@@ -234,9 +234,10 @@ export class WorkerMonitor {
       pathRaiz: job.pathRaiz,
       status: 'COMPLETED',
       operation: job.operation,
+      processor: 'GPU', // Indicate GPU (RunPod) processing
       result,
       execution
-    });
+    } as any);
 
     // Liberar workers
     await this.queueManager.releaseWorker(job.workersReserved);
@@ -262,7 +263,9 @@ export class WorkerMonitor {
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
       durationMs,
-      durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
+      durationSeconds: parseFloat((durationMs / 1000).toFixed(2)),
+      worker: 'RunPod',
+      codec: 'h264_nvenc'
     };
 
     // Atualizar job
@@ -278,12 +281,13 @@ export class WorkerMonitor {
       idRoteiro: job.idRoteiro,
       status: 'FAILED',
       operation: job.operation,
+      processor: 'GPU',
       error: {
         code: 'PROCESSING_ERROR',
         message: errorMessage
       },
       execution
-    });
+    } as any);
 
     // Liberar workers
     await this.queueManager.releaseWorker(job.workersReserved);

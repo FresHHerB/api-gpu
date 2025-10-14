@@ -34,13 +34,21 @@ export class LocalVideoProcessor {
    * Download file from URL to local disk
    */
   private async downloadFile(url: string, dest: string): Promise<void> {
-    logger.info('[LocalVideoProcessor] Downloading file', { url, dest });
+    // Encode URL to handle spaces and special characters
+    const encodedUrl = encodeURI(url);
+
+    logger.info('[LocalVideoProcessor] Downloading file', {
+      originalUrl: url,
+      encodedUrl,
+      dest
+    });
 
     const response = await axios({
-      url,
+      url: encodedUrl,
       method: 'GET',
       responseType: 'stream',
-      timeout: 300000 // 5 minutes
+      timeout: 300000, // 5 minutes
+      maxRedirects: 5
     });
 
     const writer = require('fs').createWriteStream(dest);
@@ -51,7 +59,20 @@ export class LocalVideoProcessor {
         logger.info('[LocalVideoProcessor] Download completed', { dest });
         resolve();
       });
-      writer.on('error', reject);
+      writer.on('error', (error: any) => {
+        logger.error('[LocalVideoProcessor] Download write error', {
+          error: error.message,
+          dest
+        });
+        reject(error);
+      });
+      response.data.on('error', (error: any) => {
+        logger.error('[LocalVideoProcessor] Download stream error', {
+          error: error.message,
+          url: encodedUrl
+        });
+        reject(error);
+      });
     });
   }
 
