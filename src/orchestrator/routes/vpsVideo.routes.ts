@@ -156,7 +156,7 @@ const img2VidSchema = Joi.object({
   images: Joi.array().min(1).items(
     Joi.object({
       id: Joi.string().required(),
-      image_url: Joi.string().uri().required(),
+      image_url: Joi.string().required(), // Accept any string (spaces will be encoded by axios)
       duracao: Joi.number().positive().required()
     })
   ).required(),
@@ -167,8 +167,8 @@ const img2VidSchema = Joi.object({
 const addAudioSchema = Joi.object({
   webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
   id_roteiro: Joi.number().integer().optional(),
-  url_video: Joi.string().uri().required(),
-  url_audio: Joi.string().uri().required(),
+  url_video: Joi.string().required(), // Accept any string (spaces will be encoded by axios)
+  url_audio: Joi.string().required(), // Accept any string (spaces will be encoded by axios)
   path: Joi.string().required(),
   output_filename: Joi.string().required()
 });
@@ -178,7 +178,7 @@ const concatenateSchema = Joi.object({
   id_roteiro: Joi.number().integer().optional(),
   video_urls: Joi.array().min(2).items(
     Joi.object({
-      video_url: Joi.string().uri().required()
+      video_url: Joi.string().required() // Accept any string (spaces will be encoded by axios)
     })
   ).required(),
   path: Joi.string().required(),
