@@ -46,7 +46,7 @@ export class RedisJobStorage implements JobStorage {
     const jobKey = `orchestrator:jobs:${jobId}`;
     await this.redis.hset(jobKey, this.serializeJob(newJob));
 
-    logger.info('✅ Job created in Redis', { jobId, operation: job.operation });
+    logger.debug('✅ Job created in Redis', { jobId, operation: job.operation });
 
     return newJob;
   }
@@ -82,7 +82,7 @@ export class RedisJobStorage implements JobStorage {
       await this.redis.expire(jobKey, this.jobTTL);
     }
 
-    logger.info('🔄 Job updated in Redis', { jobId, updates: Object.keys(updates) });
+    logger.debug('🔄 Job updated in Redis', { jobId, updates: Object.keys(updates) });
 
     return updatedJob;
   }
@@ -90,7 +90,7 @@ export class RedisJobStorage implements JobStorage {
   async deleteJob(jobId: string): Promise<void> {
     const jobKey = `orchestrator:jobs:${jobId}`;
     await this.redis.del(jobKey);
-    logger.info('🗑️ Job deleted from Redis', { jobId });
+    logger.debug('🗑️ Job deleted from Redis', { jobId });
   }
 
   // ============================================
@@ -99,13 +99,13 @@ export class RedisJobStorage implements JobStorage {
 
   async enqueueJob(jobId: string): Promise<void> {
     await this.redis.lpush('orchestrator:queue:pending', jobId);
-    logger.info('📥 Job enqueued in Redis', { jobId });
+    logger.debug('📥 Job enqueued in Redis', { jobId });
   }
 
   async dequeueJob(): Promise<string | null> {
     const jobId = await this.redis.rpop('orchestrator:queue:pending');
     if (jobId) {
-      logger.info('📤 Job dequeued from Redis', { jobId });
+      logger.debug('📤 Job dequeued from Redis', { jobId });
     }
     return jobId;
   }
@@ -167,7 +167,7 @@ export class RedisJobStorage implements JobStorage {
 
     if (available >= count) {
       await this.redis.decrby('orchestrator:workers:available', count);
-      logger.info('🔒 Workers reserved in Redis', {
+      logger.debug('🔒 Workers reserved in Redis', {
         reserved: count,
         available: available - count,
         total: this.maxWorkers
@@ -175,7 +175,7 @@ export class RedisJobStorage implements JobStorage {
       return true;
     }
 
-    logger.warn('⚠️ Not enough workers available in Redis', {
+    logger.debug('⚠️ Not enough workers available in Redis', {
       requested: count,
       available
     });
@@ -190,7 +190,7 @@ export class RedisJobStorage implements JobStorage {
       await this.redis.set('orchestrator:workers:available', capped.toString());
     }
 
-    logger.info('🔓 Workers released in Redis', {
+    logger.debug('🔓 Workers released in Redis', {
       released: count,
       available: capped,
       total: this.maxWorkers

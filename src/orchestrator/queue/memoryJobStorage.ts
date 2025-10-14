@@ -35,7 +35,7 @@ export class MemoryJobStorage implements JobStorage {
     };
 
     this.jobs.set(jobId, newJob);
-    logger.info('✅ Job created', { jobId, operation: job.operation });
+    logger.debug('✅ Job created', { jobId, operation: job.operation });
 
     return newJob;
   }
@@ -53,14 +53,14 @@ export class MemoryJobStorage implements JobStorage {
     const updatedJob = { ...job, ...updates };
     this.jobs.set(jobId, updatedJob);
 
-    logger.info('🔄 Job updated', { jobId, updates: Object.keys(updates) });
+    logger.debug('🔄 Job updated', { jobId, updates: Object.keys(updates) });
 
     return updatedJob;
   }
 
   async deleteJob(jobId: string): Promise<void> {
     this.jobs.delete(jobId);
-    logger.info('🗑️ Job deleted', { jobId });
+    logger.debug('🗑️ Job deleted', { jobId });
   }
 
   // ============================================
@@ -70,14 +70,14 @@ export class MemoryJobStorage implements JobStorage {
   async enqueueJob(jobId: string): Promise<void> {
     if (!this.queue.includes(jobId)) {
       this.queue.push(jobId);
-      logger.info('📥 Job enqueued', { jobId, queueLength: this.queue.length });
+      logger.debug('📥 Job enqueued', { jobId, queueLength: this.queue.length });
     }
   }
 
   async dequeueJob(): Promise<string | null> {
     const jobId = this.queue.shift() || null;
     if (jobId) {
-      logger.info('📤 Job dequeued', { jobId, remainingInQueue: this.queue.length });
+      logger.debug('📤 Job dequeued', { jobId, remainingInQueue: this.queue.length });
     }
     return jobId;
   }
@@ -114,14 +114,14 @@ export class MemoryJobStorage implements JobStorage {
   async reserveWorkers(count: number): Promise<boolean> {
     if (this.availableWorkers >= count) {
       this.availableWorkers -= count;
-      logger.info('🔒 Workers reserved', {
+      logger.debug('🔒 Workers reserved', {
         reserved: count,
         available: this.availableWorkers,
         total: this.maxWorkers
       });
       return true;
     }
-    logger.warn('⚠️ Not enough workers available', {
+    logger.debug('⚠️ Not enough workers available', {
       requested: count,
       available: this.availableWorkers
     });
@@ -130,7 +130,7 @@ export class MemoryJobStorage implements JobStorage {
 
   async releaseWorkers(count: number): Promise<void> {
     this.availableWorkers = Math.min(this.maxWorkers, this.availableWorkers + count);
-    logger.info('🔓 Workers released', {
+    logger.debug('🔓 Workers released', {
       released: count,
       available: this.availableWorkers,
       total: this.maxWorkers

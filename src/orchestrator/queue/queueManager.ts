@@ -12,6 +12,8 @@ export class QueueManager {
   private storage: JobStorage;
   private runpodService: RunPodService;
   private processing: boolean = false;
+  private vpsJobSkipCount: number = 0; // Track consecutive VPS job skips
+  private lastVpsSkipTime: number = 0; // Timestamp of last VPS skip
 
   constructor(storage: JobStorage, runpodService: RunPodService) {
     this.storage = storage;
@@ -76,12 +78,33 @@ export class QueueManager {
       if (this.isVPSJob(job.operation)) {
         // Re-enqueue for LocalWorkerService to pick up
         await this.storage.enqueueJob(jobId);
-        logger.debug('🔄 VPS job detected, skipping QueueManager (LocalWorkerService will handle)', {
-          jobId,
-          operation: job.operation
-        });
+
+        // Track consecutive VPS skips to avoid log spam
+        this.vpsJobSkipCount++;
+        const now = Date.now();
+        const timeSinceLastSkip = now - this.lastVpsSkipTime;
+        this.lastVpsSkipTime = now;
+
+        // Log only once per batch of VPS jobs (if skipped within 1 second, it's the same batch)
+        if (this.vpsJobSkipCount === 1 || timeSinceLastSkip > 1000) {
+          logger.debug('🔄 VPS job detected, skipping QueueManager (LocalWorkerService will handle)', {
+            jobId,
+            operation: job.operation,
+            consecutiveSkips: this.vpsJobSkipCount
+          });
+        }
+
+        // Add delay if we're repeatedly hitting VPS jobs to avoid tight loop
+        // This gives LocalWorkerService time to pick up the jobs
+        if (this.vpsJobSkipCount > 3) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        }
+
         return;
       }
+
+      // Reset VPS skip counter when we process a GPU job
+      this.vpsJobSkipCount = 0;
 
       // Calcular workers necessários
       const workersNeeded = this.calculateWorkersNeeded(job);
