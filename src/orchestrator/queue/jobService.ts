@@ -189,7 +189,8 @@ export class JobService {
    */
   private estimateWaitTime(operation: JobOperation, queuePosition: number): string {
     // Tempo médio por operação (em minutos)
-    const avgTimes: Record<JobOperation, number> = {
+    const avgTimes: Record<string, number> = {
+      // GPU operations (RunPod)
       img2vid: 5,
       caption: 2,
       addaudio: 1,
@@ -205,7 +206,10 @@ export class JobService {
     };
 
     const avgTime = avgTimes[operation] || 3;
-    const estimatedMinutes = avgTime * Math.ceil(queuePosition / 3); // 3 workers
+
+    // VPS jobs têm fila separada (LocalWorkerService), GPU jobs têm 3 workers (RunPod)
+    const workersCount = operation.includes('_vps') ? 2 : 3;
+    const estimatedMinutes = avgTime * Math.ceil(queuePosition / workersCount);
 
     if (estimatedMinutes < 1) {
       return 'less than 1 minute';

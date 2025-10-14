@@ -107,6 +107,8 @@ export class WorkerMonitor {
 
   /**
    * Verifica status de todos os jobs ativos (SUBMITTED, PROCESSING)
+   * IMPORTANTE: Apenas jobs GPU/RunPod são monitorados aqui
+   * Jobs VPS são gerenciados pelo LocalWorkerService
    */
   private async pollActiveJobs(): Promise<void> {
     try {
@@ -116,10 +118,17 @@ export class WorkerMonitor {
         return;
       }
 
-      logger.debug(`🔍 Polling ${activeJobs.length} active jobs`);
+      // Filtrar apenas jobs GPU (RunPod) - pular VPS jobs
+      const gpuJobs = activeJobs.filter(job => !this.isVPSJob(job.operation));
 
-      // Poll todos os jobs em paralelo
-      await Promise.all(activeJobs.map(job => this.pollJob(job)));
+      if (gpuJobs.length === 0) {
+        return;
+      }
+
+      logger.debug(`🔍 Polling ${gpuJobs.length} GPU jobs (${activeJobs.length - gpuJobs.length} VPS jobs skipped)`);
+
+      // Poll apenas GPU jobs em paralelo
+      await Promise.all(gpuJobs.map(job => this.pollJob(job)));
 
     } catch (error) {
       logger.error('❌ Error polling active jobs', {
@@ -312,7 +321,9 @@ export class WorkerMonitor {
   }
 
   /**
-   * Verificar timeouts de jobs
+   * Verificar timeouts de jobs GPU/RunPod
+   * IMPORTANTE: Apenas jobs GPU são verificados
+   * Jobs VPS têm seu próprio timeout no LocalWorkerService
    */
   private async checkTimeouts(): Promise<void> {
     try {
@@ -320,12 +331,17 @@ export class WorkerMonitor {
       const now = Date.now();
 
       for (const job of activeJobs) {
+        // Pular jobs VPS - gerenciados pelo LocalWorkerService
+        if (this.isVPSJob(job.operation)) {
+          continue;
+        }
+
         const startTime = job.submittedAt || job.createdAt;
         const elapsed = now - startTime.getTime();
         const timeout = this.getTimeoutForOperation(job.operation);
 
         if (elapsed > timeout) {
-          logger.error('⏰ Job TIMEOUT', {
+          logger.error('⏰ GPU Job TIMEOUT', {
             jobId: job.jobId,
             operation: job.operation,
             elapsedMs: elapsed,
@@ -357,24 +373,26 @@ export class WorkerMonitor {
   }
 
   /**
-   * Retorna timeout adequado para cada operação
+   * Retorna timeout adequado para cada operação GPU
+   * VPS jobs não são monitorados aqui
    */
   private getTimeoutForOperation(operation: JobOperation): number {
-    const timeouts: Record<JobOperation, number> = {
+    const timeouts: Record<string, number> = {
       img2vid: 60 * 60 * 1000,     // 60 min
       caption: 10 * 60 * 1000,     // 10 min
       addaudio: 5 * 60 * 1000,     // 5 min
       caption_segments: 10 * 60 * 1000,  // 10 min
       caption_highlight: 10 * 60 * 1000,  // 10 min
-      concatenate: 15 * 60 * 1000,  // 15 min
-      // VPS operations (CPU-based, longer timeouts)
-      img2vid_vps: 120 * 60 * 1000,     // 120 min
-      caption_segments_vps: 20 * 60 * 1000,  // 20 min
-      caption_highlight_vps: 20 * 60 * 1000,  // 20 min
-      addaudio_vps: 10 * 60 * 1000,     // 10 min
-      concatenate_vps: 30 * 60 * 1000   // 30 min
+      concatenate: 15 * 60 * 1000   // 15 min
     };
 
     return timeouts[operation] || 30 * 60 * 1000; // Default: 30 min
+  }
+
+  /**
+   * Verifica se job é VPS (processado localmente)
+   */
+  private isVPSJob(operation: string): boolean {
+    return operation.includes('_vps');
   }
 }
