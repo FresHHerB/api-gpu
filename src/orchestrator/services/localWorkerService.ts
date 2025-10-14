@@ -179,9 +179,67 @@ export class LocalWorkerService {
       const endTime = new Date();
       const durationMs = endTime.getTime() - startTime.getTime();
 
+      // Build detailed error information
+      const errorDetails: any = {
+        code: 'VPS_PROCESSING_ERROR',
+        message: error.message || 'Unknown error occurred',
+        operation: job.operation,
+        timestamp: endTime.toISOString()
+      };
+
+      // Add stack trace if available
+      if (error.stack) {
+        errorDetails.stack = error.stack;
+      }
+
+      // Add HTTP error details (axios errors)
+      if (error.response) {
+        errorDetails.http = {
+          status: error.response.status,
+          statusText: error.response.statusText,
+          headers: error.response.headers,
+          data: error.response.data
+        };
+      }
+      if (error.request && !error.response) {
+        errorDetails.http = {
+          noResponse: true,
+          code: error.code,
+          message: 'Request was made but no response received'
+        };
+      }
+
+      // Add FFmpeg-specific details if available
+      if (error.code !== undefined && typeof error.code === 'number') {
+        errorDetails.ffmpegExitCode = error.code;
+      }
+      if (error.stderr) {
+        errorDetails.ffmpegStderr = error.stderr;
+        errorDetails.ffmpegStderrLast1000 = error.stderr.slice(-1000);
+      }
+      if (error.command) {
+        errorDetails.ffmpegCommand = error.command;
+      }
+
+      // Add payload summary for debugging
+      errorDetails.payload = {
+        operation: job.operation,
+        path: job.payload?.path,
+        imageCount: job.payload?.images?.length,
+        videoCount: job.payload?.video_urls?.length,
+        firstImageUrl: job.payload?.images?.[0]?.image_url
+      };
+
       logger.error('[LocalWorkerService] Job failed', {
         jobId: job.jobId,
-        error: error.message
+        operation: job.operation,
+        error: error.message,
+        stack: error.stack,
+        httpStatus: error.response?.status,
+        httpCode: error.code,
+        ffmpegExitCode: error.code,
+        ffmpegStderrLength: error.stderr?.length,
+        fullError: errorDetails
       });
 
       // Update job as failed
@@ -191,7 +249,7 @@ export class LocalWorkerService {
         error: error.message || 'Unknown error occurred'
       });
 
-      // Send error webhook
+      // Send detailed error webhook
       await this.sendWebhook(
         job,
         'FAILED',
@@ -199,10 +257,7 @@ export class LocalWorkerService {
         startTime,
         endTime,
         durationMs,
-        {
-          code: 'VPS_PROCESSING_ERROR',
-          message: error.message
-        }
+        errorDetails
       );
 
     } finally {

@@ -31,49 +31,126 @@ export class LocalVideoProcessor {
   }
 
   /**
+   * Requote URI similar to Python's requests.utils.requote_uri
+   * Handles URLs that may already be partially encoded
+   */
+  private requoteUri(uri: string): string {
+    // Characters that should NOT be encoded in URL paths
+    const safeChars = /[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=]/;
+
+    let result = '';
+    for (let i = 0; i < uri.length; i++) {
+      const char = uri[i];
+
+      // Check if already percent-encoded (e.g., %20)
+      if (char === '%' && i + 2 < uri.length) {
+        const hex = uri.substr(i + 1, 2);
+        if (/^[0-9A-Fa-f]{2}$/.test(hex)) {
+          // Already encoded, keep as is
+          result += char + hex;
+          i += 2;
+          continue;
+        }
+      }
+
+      // Keep safe characters as is
+      if (safeChars.test(char)) {
+        result += char;
+      } else {
+        // Encode unsafe characters
+        result += encodeURIComponent(char);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Download file from URL to local disk
    */
   private async downloadFile(url: string, dest: string): Promise<void> {
-    // Encode URL to handle spaces and special characters
-    const encodedUrl = encodeURI(url);
+    try {
+      // Encode URL using same strategy as Python's requests.utils.requote_uri
+      const encodedUrl = this.requoteUri(url);
 
-    logger.info('[LocalVideoProcessor] Downloading file', {
-      originalUrl: url,
-      encodedUrl,
-      dest
-    });
-
-    const response = await axios({
-      url: encodedUrl,
-      method: 'GET',
-      responseType: 'stream',
-      timeout: 300000, // 5 minutes
-      maxRedirects: 5
-    });
-
-    const writer = require('fs').createWriteStream(dest);
-    response.data.pipe(writer);
-
-    return new Promise((resolve, reject) => {
-      writer.on('finish', () => {
-        logger.info('[LocalVideoProcessor] Download completed', { dest });
-        resolve();
+      logger.info('[LocalVideoProcessor] Downloading file', {
+        originalUrl: url,
+        encodedUrl,
+        dest
       });
-      writer.on('error', (error: any) => {
-        logger.error('[LocalVideoProcessor] Download write error', {
-          error: error.message,
-          dest
+
+      const response = await axios({
+        url: encodedUrl,
+        method: 'GET',
+        responseType: 'stream',
+        timeout: 300000, // 5 minutes
+        maxRedirects: 5,
+        validateStatus: (status) => status >= 200 && status < 300
+      });
+
+      logger.info('[LocalVideoProcessor] Download response received', {
+        status: response.status,
+        contentLength: response.headers['content-length'],
+        contentType: response.headers['content-type'],
+        url: encodedUrl
+      });
+
+      const writer = require('fs').createWriteStream(dest);
+      response.data.pipe(writer);
+
+      return new Promise((resolve, reject) => {
+        writer.on('finish', () => {
+          logger.info('[LocalVideoProcessor] Download completed', { dest });
+          resolve();
         });
-        reject(error);
-      });
-      response.data.on('error', (error: any) => {
-        logger.error('[LocalVideoProcessor] Download stream error', {
-          error: error.message,
-          url: encodedUrl
+        writer.on('error', (error: any) => {
+          logger.error('[LocalVideoProcessor] Download write error', {
+            error: error.message,
+            stack: error.stack,
+            dest
+          });
+          reject(new Error(`Failed to write file to ${dest}: ${error.message}`));
         });
-        reject(error);
+        response.data.on('error', (error: any) => {
+          logger.error('[LocalVideoProcessor] Download stream error', {
+            error: error.message,
+            stack: error.stack,
+            url: encodedUrl
+          });
+          reject(new Error(`Failed to download from ${encodedUrl}: ${error.message}`));
+        });
       });
-    });
+
+    } catch (error: any) {
+      // Enhanced error logging for axios errors
+      if (error.response) {
+        // Server responded with error status
+        logger.error('[LocalVideoProcessor] Download failed - Server error', {
+          url,
+          status: error.response.status,
+          statusText: error.response.statusText,
+          headers: error.response.headers,
+          data: error.response.data
+        });
+        throw new Error(`HTTP ${error.response.status}: ${error.response.statusText} - ${url}`);
+      } else if (error.request) {
+        // Request made but no response
+        logger.error('[LocalVideoProcessor] Download failed - No response', {
+          url,
+          error: error.message,
+          code: error.code
+        });
+        throw new Error(`No response from server: ${url} (${error.code || error.message})`);
+      } else {
+        // Error in request setup
+        logger.error('[LocalVideoProcessor] Download failed - Request setup', {
+          url,
+          error: error.message,
+          stack: error.stack
+        });
+        throw new Error(`Request setup failed: ${error.message}`);
+      }
+    }
   }
 
   /**
@@ -85,6 +162,11 @@ export class LocalVideoProcessor {
 
       const ffmpeg = spawn('ffmpeg', args);
       let stderr = '';
+      let stdout = '';
+
+      ffmpeg.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
 
       ffmpeg.stderr.on('data', (data) => {
         stderr += data.toString();
@@ -95,8 +177,21 @@ export class LocalVideoProcessor {
           logger.info('[LocalVideoProcessor] FFmpeg completed successfully');
           resolve();
         } else {
-          logger.error('[LocalVideoProcessor] FFmpeg failed', { code, stderr: stderr.slice(-500) });
-          reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+          // Log full error details
+          logger.error('[LocalVideoProcessor] FFmpeg failed', {
+            code,
+            command: `ffmpeg ${args.join(' ')}`,
+            stderrLength: stderr.length,
+            stderrLast1000: stderr.slice(-1000),
+            stderrFull: stderr // Full stderr for debugging
+          });
+
+          // Create detailed error with full stderr
+          const error = new Error(`FFmpeg failed with exit code ${code}`);
+          (error as any).code = code;
+          (error as any).stderr = stderr;
+          (error as any).command = `ffmpeg ${args.join(' ')}`;
+          reject(error);
         }
       });
 
@@ -124,6 +219,11 @@ export class LocalVideoProcessor {
 
       const ffmpeg = spawn('ffmpeg', args, { env: ffmpegEnv });
       let stderr = '';
+      let stdout = '';
+
+      ffmpeg.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
 
       ffmpeg.stderr.on('data', (data) => {
         stderr += data.toString();
@@ -146,8 +246,21 @@ export class LocalVideoProcessor {
           logger.info('[LocalVideoProcessor] FFmpeg completed successfully');
           resolve();
         } else {
-          logger.error('[LocalVideoProcessor] FFmpeg failed', { code, stderr: stderr.slice(-500) });
-          reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-500)}`));
+          // Log full error details
+          logger.error('[LocalVideoProcessor] FFmpeg failed', {
+            code,
+            command: `ffmpeg ${args.join(' ')}`,
+            stderrLength: stderr.length,
+            stderrLast1000: stderr.slice(-1000),
+            stderrFull: stderr // Full stderr for debugging
+          });
+
+          // Create detailed error with full stderr
+          const error = new Error(`FFmpeg failed with exit code ${code}`);
+          (error as any).code = code;
+          (error as any).stderr = stderr;
+          (error as any).command = `ffmpeg ${args.join(' ')}`;
+          reject(error);
         }
       });
 
@@ -352,25 +465,62 @@ export class LocalVideoProcessor {
     await fs.mkdir(workPath, { recursive: true });
 
     try {
-      logger.info('[LocalVideoProcessor] Processing img2vid', { jobId, count: data.images.length });
+      logger.info('[LocalVideoProcessor] Processing img2vid', {
+        jobId,
+        count: data.images.length,
+        path: data.path,
+        images: data.images.map((img: any) => ({ id: img.id, url: img.image_url, duration: img.duracao }))
+      });
 
       const results = [];
 
-      for (const image of data.images) {
-        logger.info('[LocalVideoProcessor] Processing image', {
+      for (let i = 0; i < data.images.length; i++) {
+        const image = data.images[i];
+        logger.info(`[LocalVideoProcessor] Processing image ${i + 1}/${data.images.length}`, {
           jobId,
           imageId: image.id,
+          imageUrl: image.image_url,
           duration: image.duracao
         });
 
         const imgPath = path.join(workPath, `${image.id}.jpg`);
         const outputPath = path.join(workPath, `video_${image.id}.mp4`);
 
-        // Download image
-        await this.downloadFile(image.image_url, imgPath);
+        try {
+          // Step 1: Download image
+          logger.info('[LocalVideoProcessor] Step 1: Downloading image', {
+            jobId,
+            imageId: image.id,
+            url: image.image_url
+          });
+          await this.downloadFile(image.image_url, imgPath);
+          logger.info('[LocalVideoProcessor] Image downloaded', {
+            jobId,
+            imageId: image.id,
+            path: imgPath
+          });
+        } catch (error: any) {
+          logger.error('[LocalVideoProcessor] Failed to download image', {
+            jobId,
+            imageId: image.id,
+            url: image.image_url,
+            error: error.message,
+            stack: error.stack
+          });
+          throw new Error(`Failed to download image ${image.id}: ${error.message}`);
+        }
 
-        // Get image metadata for optimal upscaling
+        // Step 2: Get image metadata for optimal upscaling
+        logger.info('[LocalVideoProcessor] Step 2: Getting image metadata', {
+          jobId,
+          imageId: image.id
+        });
         const imageMetadata = await this.getImageMetadata(imgPath);
+        logger.info('[LocalVideoProcessor] Image metadata retrieved', {
+          jobId,
+          imageId: image.id,
+          metadata: imageMetadata
+        });
 
         // Ken Burns parameters
         const fps = 24;
@@ -415,39 +565,75 @@ export class LocalVideoProcessor {
           outputPath
         ];
 
-        logger.info('[LocalVideoProcessor] FFmpeg parameters', {
+        logger.info('[LocalVideoProcessor] Step 3: Running FFmpeg', {
           jobId,
           imageId: image.id,
           upscale: `${upscaleWidth}x${upscaleHeight}`,
           zoom: `${zoomStart} → ${zoomEnd}`,
           frames: totalFrames,
-          duration: image.duracao
+          duration: image.duracao,
+          command: `ffmpeg ${ffmpegArgs.join(' ')}`
         });
 
-        // Execute with optimized environment (tmpfs)
-        await this.executeFFmpegWithEnv(ffmpegArgs);
+        try {
+          // Execute with optimized environment (tmpfs)
+          await this.executeFFmpegWithEnv(ffmpegArgs);
+          logger.info('[LocalVideoProcessor] FFmpeg completed', {
+            jobId,
+            imageId: image.id,
+            outputPath
+          });
+        } catch (error: any) {
+          logger.error('[LocalVideoProcessor] FFmpeg failed for image', {
+            jobId,
+            imageId: image.id,
+            command: error.command,
+            exitCode: error.code,
+            stderrLength: error.stderr?.length,
+            stderr: error.stderr,
+            error: error.message,
+            stack: error.stack
+          });
+          throw new Error(`FFmpeg failed for image ${image.id}: ${error.message}. Exit code: ${error.code}. Stderr: ${error.stderr?.slice(-500)}`);
+        }
 
-        // Upload to S3
-        const videoBuffer = await fs.readFile(outputPath);
-        const filename = `video_${image.id}.mp4`;
-        const videoUrl = await this.s3Service.uploadFile(
-          data.path,
-          filename,
-          videoBuffer,
-          'video/mp4'
-        );
+        try {
+          // Step 4: Upload to S3
+          logger.info('[LocalVideoProcessor] Step 4: Uploading to S3', {
+            jobId,
+            imageId: image.id,
+            path: data.path
+          });
+          const videoBuffer = await fs.readFile(outputPath);
+          const filename = `video_${image.id}.mp4`;
+          const videoUrl = await this.s3Service.uploadFile(
+            data.path,
+            filename,
+            videoBuffer,
+            'video/mp4'
+          );
 
-        results.push({
-          id: image.id,
-          video_url: videoUrl,
-          filename
-        });
+          results.push({
+            id: image.id,
+            video_url: videoUrl,
+            filename
+          });
 
-        logger.info('[LocalVideoProcessor] Image processed successfully', {
-          jobId,
-          imageId: image.id,
-          videoUrl
-        });
+          logger.info('[LocalVideoProcessor] Image processed successfully', {
+            jobId,
+            imageId: image.id,
+            videoUrl,
+            filename
+          });
+        } catch (error: any) {
+          logger.error('[LocalVideoProcessor] Failed to upload video', {
+            jobId,
+            imageId: image.id,
+            error: error.message,
+            stack: error.stack
+          });
+          throw new Error(`Failed to upload video for image ${image.id}: ${error.message}`);
+        }
       }
 
       const pathRaiz = this.extractPathRaiz(data.path);
