@@ -12,7 +12,8 @@ LABEL description="Orchestrator for GPU auto-scaling with Vast.ai"
 # Instalar dependências do sistema
 RUN apk add --no-cache \
     curl \
-    git
+    git \
+    ffmpeg
 
 WORKDIR /app
 
@@ -35,7 +36,8 @@ RUN npm run build:orchestrator
 RUN npm prune --production
 
 # Criar diretórios
-RUN mkdir -p /app/logs
+RUN mkdir -p /app/logs /tmp/vps-work /tmp/vps-output && \
+    chmod 777 /tmp/vps-work /tmp/vps-output
 
 # Expor porta
 EXPOSE 3000
