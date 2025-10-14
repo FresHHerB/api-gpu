@@ -500,8 +500,198 @@ export class LocalVideoProcessor {
   }
 
   /**
-   * Process Img2Vid
-   * Fixed based on api-transcricao working implementation
+   * Process single image to video
+   * Extracted method for parallel processing
+   */
+  private async processSingleImage(
+    image: any,
+    zoomType: string,
+    workPath: string,
+    jobId: string,
+    imageIndex: number,
+    totalImages: number,
+    s3Path: string
+  ): Promise<any> {
+    logger.info(`[LocalVideoProcessor] Processing image ${imageIndex + 1}/${totalImages}`, {
+      jobId,
+      imageId: image.id,
+      imageUrl: image.image_url,
+      duration: image.duracao,
+      zoomType
+    });
+
+    const imgPath = path.join(workPath, `${image.id}.jpg`);
+    const outputPath = path.join(workPath, `video_${image.id}.mp4`);
+
+    try {
+      // Step 1: Download image
+      logger.info('[LocalVideoProcessor] Step 1: Downloading image', {
+        jobId,
+        imageId: image.id,
+        url: image.image_url
+      });
+      await this.downloadFile(image.image_url, imgPath);
+      logger.info('[LocalVideoProcessor] Image downloaded', {
+        jobId,
+        imageId: image.id,
+        path: imgPath
+      });
+    } catch (error: any) {
+      logger.error('[LocalVideoProcessor] Failed to download image', {
+        jobId,
+        imageId: image.id,
+        url: image.image_url,
+        error: error.message,
+        stack: error.stack
+      });
+      throw new Error(`Failed to download image ${image.id}: ${error.message}`);
+    }
+
+    // Step 2: Get image metadata for optimal upscaling
+    logger.info('[LocalVideoProcessor] Step 2: Getting image metadata', {
+      jobId,
+      imageId: image.id
+    });
+    const imageMetadata = await this.getImageMetadata(imgPath);
+    logger.info('[LocalVideoProcessor] Image metadata retrieved', {
+      jobId,
+      imageId: image.id,
+      metadata: imageMetadata
+    });
+
+    // Ken Burns parameters
+    const fps = 24;
+    const totalFrames = Math.round(image.duracao * fps);
+
+    // Upscale 6x for smooth zoom (balanced quality and performance)
+    const upscaleFactor = 6;
+    const upscaleWidth = imageMetadata ? imageMetadata.width * upscaleFactor : 11520;
+    const upscaleHeight = imageMetadata ? imageMetadata.height * upscaleFactor : 6480;
+
+    logger.info('[LocalVideoProcessor] Upscale configuration', {
+      jobId,
+      imageId: image.id,
+      factor: upscaleFactor,
+      original: imageMetadata ? `${imageMetadata.width}x${imageMetadata.height}` : '1920x1080 (default)',
+      upscaled: `${upscaleWidth}x${upscaleHeight}`
+    });
+
+    // Define zoom effect based on type
+    let zoomFormula: string;
+    let xFormula: string;
+    let yFormula: string;
+
+    if (zoomType === 'zoomout') {
+      const zoomStart = 1.25;
+      const zoomEnd = 1.0;
+      const zoomDiff = zoomStart - zoomEnd;
+      zoomFormula = `max(${zoomStart}-${zoomDiff}*on/${totalFrames},${zoomEnd})`;
+      xFormula = 'iw/2-(iw/zoom/2)';
+      yFormula = 'ih/2-(ih/zoom/2)';
+    } else if (zoomType === 'zoompanright') {
+      const zoomStart = 1.0;
+      const zoomEnd = 1.25;
+      const zoomDiff = zoomEnd - zoomStart;
+      zoomFormula = `min(${zoomStart}+${zoomDiff}*on/${totalFrames},${zoomEnd})`;
+      xFormula = `(iw-ow/zoom)*on/${totalFrames}`;
+      yFormula = 'ih/2-(ih/zoom/2)';
+    } else {
+      const zoomStart = 1.0;
+      const zoomEnd = 1.25;
+      const zoomDiff = zoomEnd - zoomStart;
+      zoomFormula = `min(${zoomStart}+${zoomDiff}*on/${totalFrames},${zoomEnd})`;
+      xFormula = 'iw/2-(iw/zoom/2)';
+      yFormula = 'ih/2-(ih/zoom/2)';
+    }
+
+    // Build video filter
+    const videoFilter = [
+      `scale=${upscaleWidth}:${upscaleHeight}:flags=lanczos`,
+      `zoompan=z='${zoomFormula}':d=${totalFrames}:x='${xFormula}':y='${yFormula}':s=1920x1080:fps=${fps}`,
+      'scale=1920:1080:flags=bicubic',
+      'format=yuv420p'
+    ].join(',');
+
+    // FFmpeg args
+    const ffmpegArgs = [
+      '-framerate', fps.toString(),
+      '-loop', '1',
+      '-i', imgPath,
+      '-vf', videoFilter,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast', // Faster preset for parallel processing
+      '-crf', '23',
+      '-threads', '1', // Single thread per process (controlled parallelism)
+      '-t', String(image.duracao),
+      '-max_muxing_queue_size', '1024',
+      '-movflags', '+faststart',
+      '-y',
+      outputPath
+    ];
+
+    logger.info('[LocalVideoProcessor] Step 3: Running FFmpeg', {
+      jobId,
+      imageId: image.id,
+      zoomType,
+      upscale: `${upscaleWidth}x${upscaleHeight}`,
+      frames: totalFrames,
+      duration: image.duracao,
+      command: `ffmpeg ${ffmpegArgs.join(' ')}`
+    });
+
+    try {
+      await this.executeFFmpegWithEnv(ffmpegArgs);
+      logger.info('[LocalVideoProcessor] FFmpeg completed', {
+        jobId,
+        imageId: image.id,
+        outputPath
+      });
+    } catch (error: any) {
+      logger.error('[LocalVideoProcessor] FFmpeg failed for image', {
+        jobId,
+        imageId: image.id,
+        command: error.command,
+        exitCode: error.code,
+        stderrLength: error.stderr?.length,
+        stderr: error.stderr,
+        error: error.message,
+        stack: error.stack
+      });
+      throw new Error(`FFmpeg failed for image ${image.id}: ${error.message}. Exit code: ${error.code}. Stderr: ${error.stderr?.slice(-500)}`);
+    }
+
+    // Step 4: Upload to S3
+    logger.info('[LocalVideoProcessor] Step 4: Uploading to S3', {
+      jobId,
+      imageId: image.id,
+      path: s3Path
+    });
+    const videoBuffer = await fs.readFile(outputPath);
+    const filename = `video_${image.id}.mp4`;
+    const videoUrl = await this.s3Service.uploadFile(
+      s3Path,
+      filename,
+      videoBuffer,
+      'video/mp4'
+    );
+
+    logger.info('[LocalVideoProcessor] Image processed successfully', {
+      jobId,
+      imageId: image.id,
+      videoUrl,
+      filename
+    });
+
+    return {
+      id: image.id,
+      video_url: videoUrl,
+      filename
+    };
+  }
+
+  /**
+   * Process Img2Vid with parallel processing
+   * Optimized for 2 vCPU cores with controlled concurrency
    * Supports zoom_types: zoomin, zoomout, zoompanright
    */
   async processImg2Vid(data: any): Promise<{ videos: any[]; pathRaiz?: string }> {
@@ -517,219 +707,64 @@ export class LocalVideoProcessor {
       // Distribute zoom types proportionally and randomly
       const zoomDistribution = this.distributeZoomTypes(zoomTypes, imageCount);
 
-      logger.info('[LocalVideoProcessor] Processing img2vid', {
+      logger.info('[LocalVideoProcessor] Processing img2vid with parallel processing', {
         jobId,
         count: imageCount,
         path: data.path,
         zoomTypes,
+        concurrency: 2, // Max 2 parallel processes for 2 vCPU
         images: data.images.map((img: any) => ({ id: img.id, url: img.image_url, duration: img.duracao }))
       });
 
-      const results = [];
+      const results: any[] = [];
 
-      for (let i = 0; i < data.images.length; i++) {
-        const image = data.images[i];
-        const zoomType = zoomDistribution[i]; // Get zoom type for this image
-        logger.info(`[LocalVideoProcessor] Processing image ${i + 1}/${data.images.length}`, {
+      // Process in batches of 2 (parallel) for optimal 2-vCPU usage
+      const CONCURRENCY = 2;
+      for (let i = 0; i < data.images.length; i += CONCURRENCY) {
+        const batch = data.images.slice(i, i + CONCURRENCY);
+        const batchNum = Math.floor(i / CONCURRENCY) + 1;
+        const totalBatches = Math.ceil(data.images.length / CONCURRENCY);
+
+        logger.info(`[LocalVideoProcessor] Processing batch ${batchNum}/${totalBatches} (${batch.length} images in parallel)`, {
           jobId,
-          imageId: image.id,
-          imageUrl: image.image_url,
-          duration: image.duracao,
-          zoomType
+          batchSize: batch.length,
+          totalCompleted: results.length,
+          totalImages: data.images.length
         });
 
-        const imgPath = path.join(workPath, `${image.id}.jpg`);
-        const outputPath = path.join(workPath, `video_${image.id}.mp4`);
-
-        try {
-          // Step 1: Download image
-          logger.info('[LocalVideoProcessor] Step 1: Downloading image', {
+        // Process batch in parallel using Promise.all
+        const batchPromises = batch.map((image: any, batchIndex: number) => {
+          const globalIndex = i + batchIndex;
+          const zoomType = zoomDistribution[globalIndex];
+          return this.processSingleImage(
+            image,
+            zoomType,
+            workPath,
             jobId,
-            imageId: image.id,
-            url: image.image_url
-          });
-          await this.downloadFile(image.image_url, imgPath);
-          logger.info('[LocalVideoProcessor] Image downloaded', {
-            jobId,
-            imageId: image.id,
-            path: imgPath
-          });
-        } catch (error: any) {
-          logger.error('[LocalVideoProcessor] Failed to download image', {
-            jobId,
-            imageId: image.id,
-            url: image.image_url,
-            error: error.message,
-            stack: error.stack
-          });
-          throw new Error(`Failed to download image ${image.id}: ${error.message}`);
-        }
-
-        // Step 2: Get image metadata for optimal upscaling
-        logger.info('[LocalVideoProcessor] Step 2: Getting image metadata', {
-          jobId,
-          imageId: image.id
-        });
-        const imageMetadata = await this.getImageMetadata(imgPath);
-        logger.info('[LocalVideoProcessor] Image metadata retrieved', {
-          jobId,
-          imageId: image.id,
-          metadata: imageMetadata
-        });
-
-        // Ken Burns parameters - Professional anti-jitter based on FFmpeg best practices
-        const fps = 24;
-        const totalFrames = Math.round(image.duracao * fps);
-
-        // Upscale 10x for smooth zoom (same as GPU worker for maximum precision)
-        const upscaleFactor = 10;
-        const upscaleWidth = imageMetadata ? imageMetadata.width * upscaleFactor : 19200;
-        const upscaleHeight = imageMetadata ? imageMetadata.height * upscaleFactor : 10800;
-
-        // Define zoom effect based on type (SAME AS GPU WORKER)
-        // CRITICAL: NO trunc() - causes jitter due to rounding
-        // Use continuous float values for smooth sub-pixel motion
-        let zoomFormula: string;
-        let xFormula: string;
-        let yFormula: string;
-
-        if (zoomType === 'zoomout') {
-          // ZOOM OUT: Starts zoomed in, ends normal
-          const zoomStart = 1.25;
-          const zoomEnd = 1.0;
-          const zoomDiff = zoomStart - zoomEnd;
-          zoomFormula = `max(${zoomStart}-${zoomDiff}*on/${totalFrames},${zoomEnd})`;
-          // Centered - no trunc() for smooth motion
-          xFormula = 'iw/2-(iw/zoom/2)';
-          yFormula = 'ih/2-(ih/zoom/2)';
-
-        } else if (zoomType === 'zoompanright') {
-          // ZOOM IN + PAN RIGHT
-          // Starts at left (x=0), ends at right (x=x_max)
-          const zoomStart = 1.0;
-          const zoomEnd = 1.25;
-          const zoomDiff = zoomEnd - zoomStart;
-          zoomFormula = `min(${zoomStart}+${zoomDiff}*on/${totalFrames},${zoomEnd})`;
-
-          // Pan from left to right
-          // x: 0 → (iw - ow/zoom)
-          // Linear motion: progress × max_distance
-          xFormula = `(iw-ow/zoom)*on/${totalFrames}`;
-
-          // Centered vertically
-          yFormula = 'ih/2-(ih/zoom/2)';
-
-        } else {
-          // ZOOM IN (default): Starts normal, ends zoomed in
-          const zoomStart = 1.0;
-          const zoomEnd = 1.25;
-          const zoomDiff = zoomEnd - zoomStart;
-          zoomFormula = `min(${zoomStart}+${zoomDiff}*on/${totalFrames},${zoomEnd})`;
-          // Centered - no trunc() for smooth motion
-          xFormula = 'iw/2-(iw/zoom/2)';
-          yFormula = 'ih/2-(ih/zoom/2)';
-        }
-
-        // Build video filter - Bicubic downscaling for best quality (SAME AS GPU WORKER)
-        const videoFilter = [
-          // Stage 1: Upscale image for smooth zoom
-          `scale=${upscaleWidth}:${upscaleHeight}:flags=lanczos`,
-
-          // Stage 2: Apply zoom effect with smooth sub-pixel motion
-          `zoompan=z='${zoomFormula}':d=${totalFrames}:x='${xFormula}':y='${yFormula}':s=1920x1080:fps=${fps}`,
-
-          // Stage 3: Final downscale with bicubic for smoothness
-          'scale=1920:1080:flags=bicubic',
-
-          // Stage 4: Ensure proper pixel format
-          'format=yuv420p'
-        ].join(',');
-
-        // FFmpeg args (FIXED ORDER: framerate MUST come before loop)
-        const ffmpegArgs = [
-          '-framerate', fps.toString(), // CRITICAL: Must be before -loop
-          '-loop', '1',
-          '-i', imgPath,
-          '-vf', videoFilter,
-          '-c:v', 'libx264',
-          '-preset', 'ultrafast', // Faster than 'medium', good quality
-          '-crf', '23',
-          '-threads', '2', // Optimize for VPS (2 vCPU cores)
-          '-t', String(image.duracao),
-          '-max_muxing_queue_size', '1024', // Prevent buffer overflow
-          '-movflags', '+faststart',
-          '-y',
-          outputPath
-        ];
-
-        logger.info('[LocalVideoProcessor] Step 3: Running FFmpeg', {
-          jobId,
-          imageId: image.id,
-          zoomType,
-          upscale: `${upscaleWidth}x${upscaleHeight}`,
-          frames: totalFrames,
-          duration: image.duracao,
-          command: `ffmpeg ${ffmpegArgs.join(' ')}`
-        });
-
-        try {
-          // Execute with optimized environment (tmpfs)
-          await this.executeFFmpegWithEnv(ffmpegArgs);
-          logger.info('[LocalVideoProcessor] FFmpeg completed', {
-            jobId,
-            imageId: image.id,
-            outputPath
-          });
-        } catch (error: any) {
-          logger.error('[LocalVideoProcessor] FFmpeg failed for image', {
-            jobId,
-            imageId: image.id,
-            command: error.command,
-            exitCode: error.code,
-            stderrLength: error.stderr?.length,
-            stderr: error.stderr,
-            error: error.message,
-            stack: error.stack
-          });
-          throw new Error(`FFmpeg failed for image ${image.id}: ${error.message}. Exit code: ${error.code}. Stderr: ${error.stderr?.slice(-500)}`);
-        }
-
-        try {
-          // Step 4: Upload to S3
-          logger.info('[LocalVideoProcessor] Step 4: Uploading to S3', {
-            jobId,
-            imageId: image.id,
-            path: data.path
-          });
-          const videoBuffer = await fs.readFile(outputPath);
-          const filename = `video_${image.id}.mp4`;
-          const videoUrl = await this.s3Service.uploadFile(
-            data.path,
-            filename,
-            videoBuffer,
-            'video/mp4'
+            globalIndex,
+            data.images.length,
+            data.path
           );
+        });
 
-          results.push({
-            id: image.id,
-            video_url: videoUrl,
-            filename
-          });
+        // Wait for all images in batch to complete
+        try {
+          const batchResults = await Promise.all(batchPromises);
+          results.push(...batchResults);
 
-          logger.info('[LocalVideoProcessor] Image processed successfully', {
+          logger.info(`[LocalVideoProcessor] Batch ${batchNum}/${totalBatches} completed`, {
             jobId,
-            imageId: image.id,
-            videoUrl,
-            filename
+            completedInBatch: batchResults.length,
+            totalCompleted: results.length,
+            remaining: data.images.length - results.length
           });
         } catch (error: any) {
-          logger.error('[LocalVideoProcessor] Failed to upload video', {
+          logger.error('[LocalVideoProcessor] Batch processing failed', {
             jobId,
-            imageId: image.id,
-            error: error.message,
-            stack: error.stack
+            batchNum,
+            error: error.message
           });
-          throw new Error(`Failed to upload video for image ${image.id}: ${error.message}`);
+          throw error;
         }
       }
 

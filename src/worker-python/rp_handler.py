@@ -355,6 +355,38 @@ def add_caption(
         srt_path.unlink(missing_ok=True)
 
 
+def get_image_metadata(image_path: Path) -> Optional[Dict[str, int]]:
+    """Get image dimensions using ffprobe"""
+    try:
+        cmd = [
+            'ffprobe',
+            '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_streams',
+            str(image_path)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        import json
+        metadata = json.loads(result.stdout)
+
+        # Find video stream (images are treated as video by ffprobe)
+        for stream in metadata.get('streams', []):
+            if stream.get('codec_type') == 'video':
+                width = stream.get('width')
+                height = stream.get('height')
+                if width and height:
+                    logger.info(f"Image metadata: {width}x{height}")
+                    return {'width': width, 'height': height}
+
+        logger.warning(f"Could not extract image dimensions from {image_path}")
+        return None
+
+    except Exception as e:
+        logger.warning(f"Failed to get image metadata: {e}")
+        return None
+
+
 def image_to_video(
     image_id: str,
     image_url: str,
@@ -386,12 +418,22 @@ def image_to_video(
         # Download image
         download_file(image_url, image_path)
 
-        # Zoom parameters - Professional anti-jitter based on FFmpeg best practices
-        # Study reference: High upscale (10x+) + correct pan formulas = jitter-free
+        # Get image metadata for optimal upscaling
+        image_metadata = get_image_metadata(image_path)
+
+        # Zoom parameters - Optimized upscale (6x) for balanced quality and performance
         total_frames = int(frame_rate * duracao)
-        upscale_factor = 10  # Professional upscale: 10x for maximum precision
-        upscale_width = 1920 * upscale_factor  # 19200px
-        upscale_height = 1080 * upscale_factor  # 10800px
+        upscale_factor = 6  # Balanced upscale: 6x for good quality and faster processing
+
+        # Use actual image dimensions if available, otherwise default to 1920x1080
+        if image_metadata:
+            upscale_width = image_metadata['width'] * upscale_factor
+            upscale_height = image_metadata['height'] * upscale_factor
+            logger.info(f"Using actual image dimensions: {image_metadata['width']}x{image_metadata['height']} → {upscale_width}x{upscale_height}")
+        else:
+            upscale_width = 1920 * upscale_factor  # 11520px
+            upscale_height = 1080 * upscale_factor  # 6480px
+            logger.info(f"Using default dimensions: 1920x1080 → {upscale_width}x{upscale_height}")
 
         # Define zoom effect based on type
         # CRITICAL: NO trunc() - causes jitter due to rounding
