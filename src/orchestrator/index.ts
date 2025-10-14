@@ -18,6 +18,7 @@ dotenv.config();
 import videoProxyRoutes, { setJobService as setVideoJobService } from './routes/videoProxy';
 import transcriptionRoutes from './routes/transcription';
 import captionUnifiedRoutes, { setJobService as setCaptionJobService } from './routes/caption-unified.routes';
+import vpsVideoRoutes, { setJobService as setVPSJobService } from './routes/vpsVideo.routes';
 import jobRoutes, { setJobService } from './routes/jobs.routes';
 
 // Importar cleanup scheduler
@@ -27,15 +28,19 @@ import { startCleanupScheduler } from './utils/cleanup';
 import { createQueueSystem, QueueSystem } from './utils/queueFactory';
 import { RunPodService } from './services/runpodService';
 
+// Importar VPS local worker
+import { LocalWorkerService } from './services/localWorkerService';
+
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
 
 // ============================================
-// Initialize Queue System
+// Initialize Queue System & Local Worker
 // ============================================
 
 let queueSystem: QueueSystem;
+let localWorkerService: LocalWorkerService;
 
 async function initializeQueueSystem() {
   try {
@@ -49,6 +54,7 @@ async function initializeQueueSystem() {
     setJobService(queueSystem.jobService);
     setVideoJobService(queueSystem.jobService);
     setCaptionJobService(queueSystem.jobService);
+    setVPSJobService(queueSystem.jobService);
 
     // Start queue system
     queueSystem.start();
@@ -56,6 +62,29 @@ async function initializeQueueSystem() {
     logger.info('✅ Queue System started successfully');
   } catch (error) {
     logger.error('Failed to initialize Queue System', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    throw error;
+  }
+}
+
+async function initializeLocalWorkerService() {
+  try {
+    // Get JobStorage from queue system
+    const storage = queueSystem.storage;
+
+    // Initialize Local Worker Service
+    const maxConcurrentJobs = parseInt(process.env.VPS_MAX_CONCURRENT_JOBS || '2', 10);
+    localWorkerService = new LocalWorkerService(storage, maxConcurrentJobs);
+
+    // Start local worker service
+    await localWorkerService.start();
+
+    logger.info('✅ Local Worker Service started successfully', {
+      maxConcurrentJobs
+    });
+  } catch (error) {
+    logger.error('Failed to initialize Local Worker Service', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
     throw error;
@@ -140,8 +169,11 @@ app.get('/health', async (_req, res) => {
 // Static files - serve output videos
 app.use('/output', express.static(path.join(process.cwd(), 'public', 'output')));
 
-// Video processing routes
+// GPU Video processing routes (RunPod)
 app.use('/', videoProxyRoutes);
+
+// VPS Video processing routes (Local CPU)
+app.use('/', vpsVideoRoutes);
 
 // Transcription routes
 app.use('/', transcriptionRoutes);
@@ -155,11 +187,12 @@ app.use('/', jobRoutes);
 // Root endpoint
 app.get('/', (_req, res) => {
   res.json({
-    message: 'API GPU Orchestrator - RunPod Serverless with Queue System',
-    version: '3.0.0',
+    message: 'API GPU Orchestrator - RunPod Serverless + Local VPS Processing',
+    version: '3.1.0',
     features: {
       queue: 'Job queue with webhook notifications',
-      workers: '3 concurrent workers managed automatically',
+      gpu: 'RunPod serverless GPU workers (NVENC acceleration)',
+      vps: 'Local VPS CPU workers (libx264 fallback)',
       polling: 'Background polling (no request blocking)',
       webhooks: 'Automatic result delivery to webhook_url'
     },
@@ -167,11 +200,17 @@ app.get('/', (_req, res) => {
       sync: {
         transcribe: 'POST /gpu/audio/transcribe (synchronous GPU transcription, requires X-API-Key)'
       },
-      async: {
-        img2vid: 'POST /gpu/video/img2vid (webhook_url required, id_roteiro optional)',
-        addaudio: 'POST /gpu/video/addaudio (webhook_url required, id_roteiro optional)',
-        concatenate: 'POST /gpu/video/concatenate (webhook_url required, id_roteiro optional)',
-        captionStyle: 'POST /gpu/video/caption_style (webhook_url required, type: segments|highlight)'
+      asyncGPU: {
+        img2vid: 'POST /gpu/video/img2vid (GPU, webhook_url required, id_roteiro optional)',
+        addaudio: 'POST /gpu/video/addaudio (GPU, webhook_url required, id_roteiro optional)',
+        concatenate: 'POST /gpu/video/concatenate (GPU, webhook_url required, id_roteiro optional)',
+        captionStyle: 'POST /gpu/video/caption_style (GPU, webhook_url required, type: segments|highlight)'
+      },
+      asyncVPS: {
+        img2vid: 'POST /vps/video/img2vid (CPU, webhook_url required, id_roteiro optional)',
+        addaudio: 'POST /vps/video/addaudio (CPU, webhook_url required, id_roteiro optional)',
+        concatenate: 'POST /vps/video/concatenate (CPU, webhook_url required, id_roteiro optional)',
+        captionStyle: 'POST /vps/video/caption_style (CPU, webhook_url required, type: segments|highlight)'
       },
       jobs: {
         status: 'GET /jobs/:jobId (check job status with progress)',
@@ -223,6 +262,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   // Initialize queue system
   await initializeQueueSystem();
 
+  // Initialize local worker service for VPS jobs
+  await initializeLocalWorkerService();
+
   // Start cleanup scheduler for old videos
   startCleanupScheduler();
 });
@@ -244,7 +286,13 @@ logger.info('⏱️ Server timeouts configured', {
 const gracefulShutdown = (signal: string) => {
   logger.info(`📴 Shutdown initiated - Signal: ${signal}`);
 
-  // Stop queue system first
+  // Stop local worker service
+  if (localWorkerService) {
+    logger.info('⏸️ Stopping local worker service...');
+    localWorkerService.stop();
+  }
+
+  // Stop queue system
   if (queueSystem) {
     logger.info('⏸️ Stopping queue system...');
     queueSystem.stop();

@@ -366,7 +366,13 @@ export class WorkerMonitor {
       addaudio: 5 * 60 * 1000,     // 5 min
       caption_segments: 10 * 60 * 1000,  // 10 min
       caption_highlight: 10 * 60 * 1000,  // 10 min
-      concatenate: 15 * 60 * 1000  // 15 min
+      concatenate: 15 * 60 * 1000,  // 15 min
+      // VPS operations (CPU-based, longer timeouts)
+      img2vid_vps: 120 * 60 * 1000,     // 120 min
+      caption_segments_vps: 20 * 60 * 1000,  // 20 min
+      caption_highlight_vps: 20 * 60 * 1000,  // 20 min
+      addaudio_vps: 10 * 60 * 1000,     // 10 min
+      concatenate_vps: 30 * 60 * 1000   // 30 min
     };
 
     return timeouts[operation] || 30 * 60 * 1000; // Default: 30 min

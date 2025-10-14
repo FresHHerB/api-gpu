@@ -302,7 +302,13 @@ export type JobOperation =
   | 'addaudio'
   | 'caption_segments'
   | 'caption_highlight'
-  | 'concatenate';
+  | 'concatenate'
+  // VPS (local CPU-based) operations
+  | 'img2vid_vps'
+  | 'caption_segments_vps'
+  | 'caption_highlight_vps'
+  | 'addaudio_vps'
+  | 'concatenate_vps';
 
 export interface Job {
   jobId: string;                    // UUID gerado pelo orquestrador

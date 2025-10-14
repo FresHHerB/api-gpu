@@ -195,7 +195,13 @@ export class JobService {
       addaudio: 1,
       caption_segments: 2,
       caption_highlight: 2,
-      concatenate: 3
+      concatenate: 3,
+      // VPS operations (CPU-based, slower)
+      img2vid_vps: 10,
+      caption_segments_vps: 4,
+      caption_highlight_vps: 4,
+      addaudio_vps: 2,
+      concatenate_vps: 6
     };
 
     const avgTime = avgTimes[operation] || 3;
