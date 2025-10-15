@@ -214,21 +214,36 @@ export class YouTubeTranscriberService {
         };
       }
 
-      // 9. Process result
-      const transcriptText = segments.join(' ').replace(/\s+/g, ' ').trim();
+      // 9. Filter out bracketed content (e.g., [Music], [Applause], etc.)
+      const cleanedSegments = segments
+        .map(segment => segment.replace(/\[.*?\]/g, '').trim())
+        .filter(text => text.length > 0);
+
+      if (cleanedSegments.length === 0) {
+        logger.warn('No valid transcript content after filtering', { videoUrl });
+        return {
+          ok: false,
+          source: videoUrl,
+          error: 'Transcript contains only bracketed content (no actual speech)'
+        };
+      }
+
+      // 10. Process result
+      const transcriptText = cleanedSegments.join(' ').replace(/\s+/g, ' ').trim();
 
       logger.info('✅ Transcript extracted successfully', {
         videoUrl,
-        segmentsCount: segments.length,
+        segmentsCount: cleanedSegments.length,
+        originalSegments: segments.length,
         textLength: transcriptText.length
       });
 
       return {
         ok: true,
         source: videoUrl,
-        segments_count: segments.length,
+        segments_count: cleanedSegments.length,
         transcript_text: transcriptText,
-        raw_segments: segments
+        raw_segments: cleanedSegments
       };
 
     } finally {
