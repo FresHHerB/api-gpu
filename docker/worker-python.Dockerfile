@@ -2,14 +2,15 @@
 # Worker Python Dockerfile (RunPod Serverless)
 # ==================================
 # Python slim + FFmpeg + Fonts for subtitle styling
+# CPU-Optimized for short video processing
 # Target: ~800MB with fonts for caption_style support
 
 FROM python:3.11-slim
 
 # Metadata
 LABEL maintainer="api-gpu-team"
-LABEL description="RunPod Serverless GPU Worker (Python) - NVENC + Subtitle Fonts"
-LABEL version="2.0.0"
+LABEL description="RunPod Serverless CPU-Optimized Worker (Python) - libx264 veryfast + Subtitle Fonts"
+LABEL version="3.0.0-cpu-optimized"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
@@ -45,13 +46,14 @@ COPY src/worker-python/rp_handler.py .
 COPY src/worker-python/caption_generator.py .
 
 # Create necessary directories
-RUN mkdir -p /tmp/work /tmp/output
+# Note: /dev/shm (RAM cache) will be used if available at runtime
+RUN mkdir -p /tmp/work /tmp/output /dev/shm/work /dev/shm/output && \
+    chmod 777 /tmp/work /tmp/output
 
 # Environment variables
 ENV PYTHONUNBUFFERED=1
-ENV WORK_DIR=/tmp/work
-ENV OUTPUT_DIR=/tmp/output
-ENV BATCH_SIZE=3
+# Note: WORK_DIR and BATCH_SIZE are calculated dynamically at runtime
+# No longer hardcoded - worker auto-detects optimal values
 
 # RunPod Serverless entry point
 CMD ["python", "-u", "rp_handler.py"]
