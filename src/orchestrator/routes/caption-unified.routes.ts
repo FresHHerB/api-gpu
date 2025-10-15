@@ -160,10 +160,10 @@ const authenticateApiKey = (req: Request, res: Response, next: Function): void =
 };
 
 // ============================================
-// POST /gpu/video/caption_style
+// POST /runpod/video/caption_style
 // Unified endpoint for both segments and highlight subtitles
 // ============================================
-router.post('/gpu/video/caption_style', authenticateApiKey, async (req: Request, res: Response) => {
+router.post('/runpod/video/caption_style', authenticateApiKey, async (req: Request, res: Response) => {
   try {
     // Validate request
     const { error, value } = unifiedCaptionSchema.validate(req.body, { abortEarly: false });

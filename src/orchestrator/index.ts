@@ -191,26 +191,26 @@ app.get('/', (_req, res) => {
     version: '3.1.0',
     features: {
       queue: 'Job queue with webhook notifications',
-      gpu: 'RunPod serverless GPU workers (NVENC acceleration)',
+      runpod: 'RunPod serverless workers (CPU-optimized libx264 veryfast)',
       vps: 'Local VPS CPU workers (libx264 fallback)',
       polling: 'Background polling (no request blocking)',
       webhooks: 'Automatic result delivery to webhook_url'
     },
     endpoints: {
       sync: {
-        transcribe: 'POST /gpu/audio/transcribe (synchronous GPU transcription, requires X-API-Key)'
+        transcribe: 'POST /runpod/audio/transcribe (synchronous RunPod transcription, requires X-API-Key)'
       },
-      asyncGPU: {
-        img2vid: 'POST /gpu/video/img2vid (GPU, webhook_url required, id_roteiro optional)',
-        addaudio: 'POST /gpu/video/addaudio (GPU, webhook_url required, id_roteiro optional)',
-        concatenate: 'POST /gpu/video/concatenate (GPU, webhook_url required, id_roteiro optional)',
-        captionStyle: 'POST /gpu/video/caption_style (GPU, webhook_url required, type: segments|highlight)'
+      asyncRunPod: {
+        img2vid: 'POST /runpod/video/img2vid (RunPod CPU-optimized, webhook_url required, id_roteiro optional)',
+        addaudio: 'POST /runpod/video/addaudio (RunPod, webhook_url required, id_roteiro optional)',
+        concatenate: 'POST /runpod/video/concatenate (RunPod, webhook_url required, id_roteiro optional)',
+        captionStyle: 'POST /runpod/video/caption_style (RunPod, webhook_url required, type: segments|highlight)'
       },
       asyncVPS: {
-        img2vid: 'POST /vps/video/img2vid (CPU, webhook_url required, id_roteiro optional)',
-        addaudio: 'POST /vps/video/addaudio (CPU, webhook_url required, id_roteiro optional)',
-        concatenate: 'POST /vps/video/concatenate (CPU, webhook_url required, id_roteiro optional)',
-        captionStyle: 'POST /vps/video/caption_style (CPU, webhook_url required, type: segments|highlight)'
+        img2vid: 'POST /vps/video/img2vid (VPS CPU, webhook_url required, id_roteiro optional)',
+        addaudio: 'POST /vps/video/addaudio (VPS CPU, webhook_url required, id_roteiro optional)',
+        concatenate: 'POST /vps/video/concatenate (VPS CPU, webhook_url required, id_roteiro optional)',
+        captionStyle: 'POST /vps/video/caption_style (VPS CPU, webhook_url required, type: segments|highlight)'
       },
       jobs: {
         status: 'GET /jobs/:jobId (check job status with progress)',
@@ -219,7 +219,7 @@ app.get('/', (_req, res) => {
       },
       health: {
         service: 'GET /health (includes queue stats)',
-        transcribe: 'GET /gpu/audio/transcribe/health (transcription service health)'
+        transcribe: 'GET /runpod/audio/transcribe/health (transcription service health)'
       }
     },
     documentation: '/docs'

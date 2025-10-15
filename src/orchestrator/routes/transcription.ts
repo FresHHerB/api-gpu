@@ -54,10 +54,10 @@ const authenticateApiKey = (req: Request, res: Response, next: Function): void =
 };
 
 // ============================================
-// POST /gpu/audio/transcribe
+// POST /runpod/audio/transcribe
 // Process audio transcription with RunPod faster-whisper
 // ============================================
-router.post('/gpu/audio/transcribe', authenticateApiKey, async (req: Request, res: Response) => {
+router.post('/runpod/audio/transcribe', authenticateApiKey, async (req: Request, res: Response) => {
   const startTime = new Date();
   const jobId = randomUUID();
 
@@ -216,10 +216,10 @@ router.post('/gpu/audio/transcribe', authenticateApiKey, async (req: Request, re
 });
 
 // ============================================
-// GET /gpu/audio/transcribe/health
+// GET /runpod/audio/transcribe/health
 // Health check for transcription service
 // ============================================
-router.get('/gpu/audio/transcribe/health', async (_req: Request, res: Response) => {
+router.get('/runpod/audio/transcribe/health', async (_req: Request, res: Response) => {
   try {
     const whisperHealth = await getWhisperService().healthCheck();
 

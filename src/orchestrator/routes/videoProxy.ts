@@ -77,12 +77,12 @@ const authenticateApiKey = (req: Request, res: Response, next: Function): void =
 // ============================================
 
 /**
- * POST /gpu/video/img2vid
+ * POST /runpod/video/img2vid
  * Convert images to videos with zoom effects
  * Returns immediately with jobId - result sent to webhook_url
  */
 router.post(
-  '/gpu/video/img2vid',
+  '/runpod/video/img2vid',
   authenticateApiKey,
   validateRequest(img2VidRequestSchema),
   async (req: Request, res: Response): Promise<void> => {
@@ -127,12 +127,12 @@ router.post(
 );
 
 /**
- * POST /gpu/video/addaudio
+ * POST /runpod/video/addaudio
  * Synchronize audio with video
  * Returns immediately with jobId - result sent to webhook_url
  */
 router.post(
-  '/gpu/video/addaudio',
+  '/runpod/video/addaudio',
   authenticateApiKey,
   validateRequest(addAudioRequestSchema),
   async (req: Request, res: Response): Promise<void> => {
@@ -176,12 +176,12 @@ router.post(
 );
 
 /**
- * POST /gpu/video/concatenate
+ * POST /runpod/video/concatenate
  * Concatenate multiple videos into one
  * Returns immediately with jobId - result sent to webhook_url
  */
 router.post(
-  '/gpu/video/concatenate',
+  '/runpod/video/concatenate',
   authenticateApiKey,
   validateRequest(concatenateRequestSchema),
   async (req: Request, res: Response): Promise<void> => {

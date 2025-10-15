@@ -1,8 +1,8 @@
 # API GPU - Serverless Video Processing
 
-Sistema de processamento de vídeo com GPU serverless usando RunPod + FFmpeg NVENC + S3 Storage.
+Sistema de processamento de vídeo serverless usando RunPod + FFmpeg + S3 Storage.
 
-Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod Serverless GPU Workers (Python) para processar vídeos com aceleração por hardware, armazenando resultados diretamente em S3/MinIO.
+Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod Serverless Workers (Python) para processar vídeos com otimizações específicas por operação, armazenando resultados diretamente em S3/MinIO.
 
 ---
 
@@ -18,32 +18,43 @@ Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod 
 
 - **Transcrição de Áudio** - Faster Whisper GPU com legendas SRT/ASS karaoke
 - **Legendas Estilizadas** - ASS unificado com customização completa (segments + karaoke)
-- **Imagem para Vídeo** - Conversão com Ken Burns effect
+- **Imagem para Vídeo** - Conversão com Ken Burns effect (CPU-optimized)
 - **Adicionar Áudio** - Substituição de trilha sonora
+- **Concatenar Vídeos** - Junção de múltiplos vídeos
 - **S3/MinIO** - Upload automático com URLs públicas
 - **Auto-scaling** - Workers serverless no RunPod (0-N workers)
 - **Zero Idle Cost** - Pague apenas pelo tempo de execução
+- **Webhook Notifications** - Notificações automáticas ao concluir processamento
 
 ---
 
 ## 📑 Endpoints
 
-### GPU-Accelerated Endpoints
+### RunPod Endpoints (Async + Webhooks)
+
+| Endpoint | Método | Descrição | Aceleração |
+|----------|--------|-----------|------------|
+| `/runpod/audio/transcribe` | POST | Transcrição com Whisper → SRT/ASS/JSON | GPU |
+| `/runpod/video/caption_style` | POST | Legendas estilizadas unificadas (type: segments\|highlight) | GPU/CPU |
+| `/runpod/video/img2vid` | POST | Imagem para vídeo com Ken Burns | **CPU-only** |
+| `/runpod/video/addaudio` | POST | Adicionar/substituir áudio | GPU/CPU |
+| `/runpod/video/concatenate` | POST | Concatenar múltiplos vídeos | GPU/CPU |
+
+### VPS Endpoints (Local CPU Fallback)
 
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
-| `/gpu/audio/transcribe` | POST | Transcrição com Whisper → SRT/ASS/JSON |
-| `/gpu/video/caption_style` | POST | Legendas estilizadas unificadas (type: segments\|highlight) |
-| `/gpu/video/img2vid` | POST | Imagem para vídeo com Ken Burns |
-| `/gpu/video/addaudio` | POST | Adicionar/substituir áudio |
-| `/gpu/video/concatenate` | POST | Concatenar múltiplos vídeos |
+| `/vps/video/img2vid` | POST | Imagem para vídeo (VPS CPU) |
+| `/vps/video/addaudio` | POST | Adicionar áudio (VPS CPU) |
+| `/vps/video/concatenate` | POST | Concatenar vídeos (VPS CPU) |
+| `/vps/video/caption_style` | POST | Legendas estilizadas (VPS CPU) |
 
 ### Management & Health
 
 | Endpoint | Método | Descrição |
 |----------|--------|-----------|
 | `/health` | GET | Orchestrator health + queue stats |
-| `/gpu/audio/transcribe/health` | GET | Transcription service health |
+| `/runpod/audio/transcribe/health` | GET | Transcription service health |
 | `/jobs/:jobId` | GET | Consultar status de job |
 | `/jobs/:jobId/cancel` | POST | Cancelar job em execução |
 | `/queue/stats` | GET | Estatísticas da fila |
@@ -59,15 +70,16 @@ Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod 
 │                      CLIENTE                                │
 │   (Aplicação, API Consumer, Automation)                    │
 └──────────────────────┬──────────────────────────────────────┘
-                       │ HTTP POST /video/*
+                       │ HTTP POST /runpod/* ou /vps/*
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                  ORCHESTRATOR (VPS)                         │
 │   • Express.js REST API                                     │
 │   • Request validation (Joi)                                │
+│   • Job Queue System (Memory/Redis)                         │
 │   • RunPod job submission                                   │
-│   • Job polling (exponential backoff)                       │
-│   • Returns S3 URLs                                         │
+│   • Webhook notifications                                   │
+│   • Local VPS worker (CPU fallback)                         │
 └──────────────────────┬──────────────────────────────────────┘
                        │ RunPod API (HTTPS)
                        ▼
@@ -81,12 +93,15 @@ Arquitetura híbrida que combina VPS orchestrator (Node.js/TypeScript) + RunPod 
                        │ Job execution
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                 PYTHON WORKER                               │
+│            PYTHON WORKER (CPU-Optimized)                    │
 │   • Download media (HTTP/S3)                                │
-│   • FFmpeg processing (GPU NVENC)                           │
-│   • Batch parallel execution                                │
+│   • FFmpeg processing:                                      │
+│     - img2vid: libx264 veryfast (CPU-only)                  │
+│     - caption/audio: GPU NVENC (if available)               │
+│   • Dynamic BATCH_SIZE (1.5x CPU cores)                     │
+│   • RAM cache detection (/dev/shm)                          │
 │   • S3 upload (boto3)                                       │
-│   • Return public URLs                                      │
+│   • Return public URLs or base64                            │
 └──────────────────────┬──────────────────────────────────────┘
                        │ Upload
                        ▼
@@ -133,6 +148,13 @@ S3_ENDPOINT_URL=https://your-minio.example.com
 S3_ACCESS_KEY=your_access_key
 S3_SECRET_KEY=your_secret_key
 S3_BUCKET_NAME=canais
+
+# Queue System (optional: MEMORY or REDIS)
+QUEUE_STORAGE=MEMORY
+# REDIS_URL=redis://localhost:6379
+
+# VPS Local Worker (optional)
+VPS_MAX_CONCURRENT_JOBS=2
 ```
 
 Ver [Deployment Guide](docs/DEPLOYMENT.md) para configuração completa.
@@ -147,7 +169,8 @@ npm run build:orchestrator
 npm run start:orchestrator
 
 # Output esperado:
-# 🚀 RunPodService initialized
+# 🚀 Queue System started successfully
+# ✅ Local Worker Service started successfully
 # 🌐 Server running on port 3000
 ```
 
@@ -155,10 +178,10 @@ npm run start:orchestrator
 
 ## 💡 Exemplos de Uso
 
-### Transcrição de Áudio
+### Transcrição de Áudio (Síncrono)
 
 ```bash
-curl -X POST https://your-api.com/gpu/audio/transcribe \
+curl -X POST https://your-api.com/runpod/audio/transcribe \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
@@ -186,10 +209,10 @@ curl -X POST https://your-api.com/gpu/audio/transcribe \
 
 ---
 
-### Legendas Estilizadas (Segments Mode)
+### Legendas Estilizadas (Segments Mode - Assíncrono)
 
 ```bash
-curl -X POST https://your-api.com/gpu/video/caption_style \
+curl -X POST https://your-api.com/runpod/video/caption_style \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
@@ -208,37 +231,36 @@ curl -X POST https://your-api.com/gpu/video/caption_style \
   }'
 ```
 
----
+**Response imediata (202):**
+```json
+{
+  "jobId": "uuid-here",
+  "status": "QUEUED",
+  "operation": "caption_segments",
+  "createdAt": "2025-01-15T10:30:00Z"
+}
+```
 
-### Legendas Karaoke (Highlight Mode)
-
-```bash
-curl -X POST https://your-api.com/gpu/video/caption_style \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your-api-key" \
-  -d '{
-    "webhook_url": "https://your-webhook.com/callback",
-    "id_roteiro": 124,
-    "url_video": "https://example.com/video.mp4",
-    "url_caption": "https://s3.../words.json",
-    "path": "Project/karaoke/",
-    "output_filename": "video_karaoke.mp4",
-    "type": "highlight",
-    "style": {
-      "highlight_texto_cor": "#FFFF00",
-      "highlight_cor": "#00FF00",
-      "fundo_opacidade": 70,
-      "words_per_line": 3
-    }
-  }'
+**Webhook callback (ao concluir):**
+```json
+{
+  "jobId": "uuid-here",
+  "status": "COMPLETED",
+  "result": {
+    "video_url": "https://s3.../video_styled.mp4",
+    "filename": "video_styled.mp4",
+    "s3_key": "Project/final/video_styled.mp4"
+  },
+  "id_roteiro": 123
+}
 ```
 
 ---
 
-### Imagem para Vídeo
+### Imagem para Vídeo (Assíncrono - CPU-Optimized)
 
 ```bash
-curl -X POST https://your-api.com/gpu/video/img2vid \
+curl -X POST https://your-api.com/runpod/video/img2vid \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-api-key" \
   -d '{
@@ -248,8 +270,19 @@ curl -X POST https://your-api.com/gpu/video/img2vid \
       {"id": "img-1", "image_url": "https://example.com/photo1.jpg", "duracao": 6.48},
       {"id": "img-2", "image_url": "https://example.com/photo2.jpg", "duracao": 5.0}
     ],
-    "path": "Project/videos/temp/"
+    "path": "Project/videos/temp/",
+    "zoom_types": ["zoomin", "zoomout", "zoompanright"]
   }'
+```
+
+**Response:**
+```json
+{
+  "jobId": "uuid-here",
+  "status": "QUEUED",
+  "operation": "img2vid",
+  "workersReserved": 2
+}
 ```
 
 ---
@@ -261,12 +294,16 @@ curl -X POST https://your-api.com/gpu/video/img2vid \
 - Express.js (REST API)
 - Joi (validation)
 - RunPod API Client
+- Job Queue System (Memory/Redis)
+- Webhook Service
 
 **Worker (RunPod Serverless):**
 - Python 3.11
-- FFmpeg com NVENC
+- FFmpeg (CPU-optimized for img2vid, GPU for others)
 - boto3 (S3 upload)
 - RunPod SDK
+- psutil (CPU detection)
+- Dynamic resource optimization
 
 **Storage:**
 - S3/MinIO (object storage)
@@ -282,10 +319,20 @@ api-gpu/
 │   │   ├── index.ts               # Express server
 │   │   ├── routes/
 │   │   │   ├── caption-unified.routes.ts  # Unified caption endpoint
-│   │   │   ├── transcribe.routes.ts       # Transcription endpoint
-│   │   │   └── videoProxy.routes.ts       # Video endpoints
-│   │   └── services/
-│   │       └── runpodService.ts   # RunPod client
+│   │   │   ├── transcription.ts           # Transcription endpoint
+│   │   │   ├── videoProxy.ts              # RunPod video endpoints
+│   │   │   ├── vpsVideo.routes.ts         # VPS local endpoints
+│   │   │   └── jobs.routes.ts             # Job management
+│   │   ├── services/
+│   │   │   ├── runpodService.ts           # RunPod client
+│   │   │   └── localWorkerService.ts      # VPS local worker
+│   │   ├── queue/
+│   │   │   ├── jobService.ts              # Job queue management
+│   │   │   ├── webhookService.ts          # Webhook delivery
+│   │   │   ├── memoryJobStorage.ts        # In-memory storage
+│   │   │   └── redisJobStorage.ts         # Redis storage
+│   │   └── utils/
+│   │       └── queueFactory.ts            # Queue system factory
 │   │
 │   ├── worker-python/             # RunPod Worker (Python)
 │   │   ├── rp_handler.py          # Handler + FFmpeg + S3
@@ -319,11 +366,46 @@ api-gpu/
 **1. Build & Push Docker Image:**
 ```bash
 docker login
-docker build -f docker/worker-python.Dockerfile -t your-dockerhub-user/api-gpu-worker:latest .
-docker push your-dockerhub-user/api-gpu-worker:latest
+docker build -f docker/worker-python.Dockerfile -t your-dockerhub-user/api-gpu-worker:3.0.0-cpu .
+docker push your-dockerhub-user/api-gpu-worker:3.0.0-cpu
 ```
 
 **2. Create Template & Endpoint:**
+
+Via RunPod GraphQL API:
+```bash
+# Create Template
+curl -X POST "https://api.runpod.io/graphql" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -d '{
+    "query": "mutation { saveTemplate(input: {
+      name: \"api-gpu-worker-v3.0.0-cpu\",
+      imageName: \"your-dockerhub-user/api-gpu-worker:3.0.0-cpu\",
+      dockerArgs: \"python -u rp_handler.py\",
+      containerDiskInGb: 10,
+      volumeInGb: 0,
+      isServerless: true,
+      env: [{key: \"HTTP_PORT\", value: \"8000\"}]
+    }) { id name } }"
+  }'
+
+# Create Endpoint
+curl -X POST "https://api.runpod.io/graphql" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $RUNPOD_API_KEY" \
+  -d '{
+    "query": "mutation { saveEndpoint(input: {
+      name: \"api-gpu-worker\",
+      templateId: \"YOUR_TEMPLATE_ID\",
+      workersMin: 0,
+      workersMax: 3,
+      gpuIds: \"AMPERE_16,AMPERE_24,NVIDIA RTX A4000\",
+      scalerType: \"QUEUE_DELAY\",
+      scalerValue: 3
+    }) { id name } }"
+  }'
+```
 
 Ver [Deployment Guide](docs/DEPLOYMENT.md) para instruções detalhadas.
 
@@ -359,7 +441,7 @@ Ver [Deployment Guide](docs/DEPLOYMENT.md) para detalhes completos.
 curl https://your-api.com/health
 
 # Transcription Service
-curl https://your-api.com/gpu/audio/transcribe/health
+curl https://your-api.com/runpod/audio/transcribe/health
 
 # Job Status
 curl https://your-api.com/jobs/{jobId} \
@@ -384,10 +466,10 @@ curl https://your-api.com/queue/stats \
 - Verificar credentials: `S3_ACCESS_KEY`, `S3_SECRET_KEY`
 - Verificar endpoint URL e firewall
 
-### Timeout Errors
-- Aumentar `POLLING_MAX_ATTEMPTS` em `.env`
-- Aumentar `EXPRESS_TIMEOUT_MS` em `.env`
-- Ajustar Execution Timeout no RunPod Console
+### Webhook não recebido
+- Verificar URL está acessível publicamente
+- Verificar firewall não bloqueia IPs do orchestrator
+- Verificar logs em `/jobs/:jobId` para erros de webhook
 
 Ver [Deployment Guide - Troubleshooting](docs/DEPLOYMENT.md#troubleshooting) para mais detalhes.
 
@@ -400,12 +482,18 @@ Ver [Deployment Guide - Troubleshooting](docs/DEPLOYMENT.md#troubleshooting) par
 - 10 min audio: ~30-60s
 - 60 min audio: ~3-5 min
 
-**Video Processing:**
+**Video Processing (RunPod):**
 - Caption (10s video): ~6-8s
-- Img2Vid (1 image): ~3-5s
+- Img2Vid (1 image, 3s): ~7s (CPU-optimized)
 - AddAudio (10s video): ~4-6s
+- Concatenate (2 videos): ~8-10s
 
 **Cold start:** +10-15 segundos (worker inativo)
+
+**Otimizações:**
+- img2vid: libx264 veryfast (2x mais rápido que NVENC para vídeos curtos)
+- Dynamic BATCH_SIZE: 1.5x CPU cores
+- RAM cache: /dev/shm quando disponível (10-50x faster I/O)
 
 ---
 
@@ -418,7 +506,7 @@ MIT
 ## 🔗 Referências
 
 - [RunPod Serverless Docs](https://docs.runpod.io/serverless/overview)
-- [FFmpeg NVENC Guide](https://docs.nvidia.com/video-technologies/video-codec-sdk/ffmpeg-with-nvidia-gpu/)
+- [FFmpeg Documentation](https://ffmpeg.org/documentation.html)
 - [MinIO Documentation](https://min.io/docs/minio/linux/index.html)
 - [API Reference](docs/API_REFERENCE.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
