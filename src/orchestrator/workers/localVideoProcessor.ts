@@ -371,6 +371,66 @@ export class LocalVideoProcessor {
   }
 
   /**
+   * Get media duration using ffprobe
+   * Returns duration in seconds (float)
+   */
+  private async getMediaDuration(filePath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const ffprobe = spawn('ffprobe', [
+        '-v', 'quiet',
+        '-print_format', 'json',
+        '-show_format',
+        filePath
+      ]);
+
+      let output = '';
+
+      ffprobe.stdout.on('data', (data) => {
+        output += data.toString();
+      });
+
+      ffprobe.on('close', (code) => {
+        if (code === 0) {
+          try {
+            const metadata = JSON.parse(output);
+            const duration = parseFloat(metadata.format?.duration);
+
+            if (!isNaN(duration) && duration > 0) {
+              logger.info('[LocalVideoProcessor] Media duration extracted', {
+                duration: duration.toFixed(2) + 's',
+                path: filePath
+              });
+              resolve(duration);
+            } else {
+              const error = new Error('Invalid duration in media file');
+              logger.error('[LocalVideoProcessor] Failed to extract duration', {
+                error: error.message,
+                filePath
+              });
+              reject(error);
+            }
+          } catch (error) {
+            logger.error('[LocalVideoProcessor] Failed to parse media metadata', {
+              error: error instanceof Error ? error.message : 'Unknown error',
+              filePath
+            });
+            reject(error);
+          }
+        } else {
+          const error = new Error(`FFprobe failed with exit code ${code}`);
+          logger.error('[LocalVideoProcessor] FFprobe failed', { error: error.message, filePath, code });
+          reject(error);
+        }
+      });
+
+      ffprobe.on('error', (error) => {
+        logger.error('[LocalVideoProcessor] FFprobe spawn error', { error: error.message, filePath });
+        reject(error);
+      });
+    });
+  }
+
+  /**
    * Process Caption Style (Segments)
    */
   async processCaptionSegments(data: any): Promise<{ video_url: string; pathRaiz?: string }> {
@@ -792,42 +852,78 @@ export class LocalVideoProcessor {
   }
 
   /**
-   * Process AddAudio
+   * Process AddAudio with automatic video speed adjustment
+   * Syncs video duration to match audio duration using setpts filter
    */
-  async processAddAudio(data: any): Promise<{ video_url: string; pathRaiz?: string }> {
+  async processAddAudio(data: any): Promise<{ video_url: string; pathRaiz?: string; speed_factor?: number }> {
     const jobId = randomUUID();
     const workPath = path.join(this.workDir, jobId);
     await fs.mkdir(workPath, { recursive: true });
 
     try {
-      logger.info('[LocalVideoProcessor] Processing addaudio', { jobId });
+      logger.info('[LocalVideoProcessor] Processing addaudio with sync', { jobId });
 
       const videoPath = path.join(workPath, 'input.mp4');
       const audioPath = path.join(workPath, 'audio.mp3');
       const outputPath = path.join(workPath, data.output_filename);
 
+      // Download video and audio
       await Promise.all([
         this.downloadFile(data.url_video, videoPath),
         this.downloadFile(data.url_audio, audioPath)
       ]);
 
-      // Replace audio track
+      // Get durations using ffprobe
+      const videoDuration = await this.getMediaDuration(videoPath);
+      const audioDuration = await this.getMediaDuration(audioPath);
+
+      logger.info('[LocalVideoProcessor] Duration sync', {
+        jobId,
+        video: videoDuration.toFixed(2) + 's',
+        audio: audioDuration.toFixed(2) + 's'
+      });
+
+      // Calculate speed adjustment factor
+      // speed_factor: how fast the video needs to play (video_duration / audio_duration)
+      // pts_multiplier: inverse of speed_factor (stretches or compresses PTS timeline)
+      const speedFactor = videoDuration / audioDuration;
+      const ptsMultiplier = 1 / speedFactor;
+
+      logger.info('[LocalVideoProcessor] Speed adjustment', {
+        jobId,
+        speedFactor: speedFactor.toFixed(3) + 'x',
+        ptsMultiplier: ptsMultiplier.toFixed(6)
+      });
+
+      // Build FFmpeg command with setpts filter for video speed adjustment
+      // Note: CPU decode → CPU filter (setpts) → CPU encode
       const ffmpegArgs = [
         '-i', videoPath,
         '-i', audioPath,
-        '-c:v', 'copy',
+        '-filter_complex', `[0:v]setpts=${ptsMultiplier.toFixed(6)}*PTS[vout]`,
+        '-map', '[vout]',
+        '-map', '1:a',
+        '-c:v', 'libx264',
+        '-preset', 'medium',
+        '-crf', '23',
+        '-maxrate', '10M',
+        '-bufsize', '20M',
         '-c:a', 'aac',
         '-b:a', '192k',
-        '-map', '0:v:0',
-        '-map', '1:a:0',
         '-shortest',
         '-movflags', '+faststart',
         '-y',
         outputPath
       ];
 
+      logger.info('[LocalVideoProcessor] Running FFmpeg with setpts', {
+        jobId,
+        command: `ffmpeg ${ffmpegArgs.join(' ')}`
+      });
+
       await this.executeFFmpeg(ffmpegArgs);
 
+      // Upload to S3
       const videoBuffer = await fs.readFile(outputPath);
       const videoUrl = await this.s3Service.uploadFile(
         data.path,
@@ -840,7 +936,16 @@ export class LocalVideoProcessor {
 
       await fs.rm(workPath, { recursive: true, force: true });
 
-      return { video_url: videoUrl, pathRaiz };
+      logger.info('[LocalVideoProcessor] AddAudio completed', {
+        jobId,
+        speedFactor: speedFactor.toFixed(3)
+      });
+
+      return {
+        video_url: videoUrl,
+        pathRaiz,
+        speed_factor: parseFloat(speedFactor.toFixed(3))
+      };
 
     } catch (error: any) {
       await fs.rm(workPath, { recursive: true, force: true }).catch(() => {});
