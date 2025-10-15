@@ -1,19 +1,20 @@
 # ==================================
 # Orchestrator Dockerfile (VPS)
 # ==================================
-# Imagem leve para gerenciar Vast.ai
+# Using Debian-based image for better Playwright support
 
-FROM node:20-alpine
+FROM node:20-slim
 
 # Metadata
 LABEL maintainer="your-email@example.com"
-LABEL description="Orchestrator for GPU auto-scaling with Vast.ai"
+LABEL description="Orchestrator for GPU auto-scaling with Vast.ai and YouTube transcript extraction"
 
 # Instalar dependências do sistema
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     curl \
     git \
-    ffmpeg
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -22,6 +23,9 @@ COPY package.json package-lock.json ./
 
 # Instalar dependências (incluindo dev para build)
 RUN npm install
+
+# Instalar browsers do Playwright (apenas Chromium com dependências)
+RUN npx playwright install chromium --with-deps
 
 # Copiar código orchestrator + shared
 COPY src/orchestrator ./src/orchestrator
