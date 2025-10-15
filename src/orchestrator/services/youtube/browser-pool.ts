@@ -3,7 +3,7 @@
 // Manages a pool of browsers for concurrent scraping
 // ============================================
 
-import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { chromium, Browser, BrowserContext } from 'playwright';
 import { logger } from '../../../shared/utils/logger';
 
 export class BrowserPool {

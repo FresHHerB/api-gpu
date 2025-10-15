@@ -5,7 +5,7 @@
 
 import { BrowserContext } from 'playwright';
 import { browserPool } from './browser-pool';
-import { cacheService, TranscriptCacheEntry } from './cache.service';
+import { cacheService } from './cache.service';
 import { logger } from '../../../shared/utils/logger';
 
 export interface YouTubeTranscriptResult {
@@ -136,10 +136,12 @@ export class YouTubeTranscriberService {
 
       // 4. Scroll to description area
       await page.evaluate(() => {
+        // @ts-expect-error - Browser context DOM manipulation
         const transcriptSection = document.querySelector('ytd-video-description-transcript-section-renderer');
         if (transcriptSection) {
-          transcriptSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          (transcriptSection as any).scrollIntoView({ behavior: 'smooth', block: 'center' });
         } else {
+          // @ts-expect-error - Browser context window object
           window.scrollTo(0, 800);
         }
       });
@@ -158,13 +160,15 @@ export class YouTubeTranscriberService {
 
       // 6. Click on transcript button
       const clicked = await page.evaluate(() => {
+        // @ts-expect-error - Browser context DOM manipulation
         // Strategy 1: Direct selector (most reliable)
-        let btn = document.querySelector('ytd-video-description-transcript-section-renderer button') as HTMLElement;
+        let btn = document.querySelector('ytd-video-description-transcript-section-renderer button');
 
         // Strategy 2: Search by text content
         if (!btn) {
+          // @ts-expect-error - Browser context DOM manipulation
           const buttons = Array.from(document.querySelectorAll('button'));
-          btn = buttons.find(b => {
+          btn = buttons.find((b: any) => {
             const text = (b.textContent || '').toLowerCase();
             const aria = (b.getAttribute('aria-label') || '').toLowerCase();
             return (
@@ -175,7 +179,7 @@ export class YouTubeTranscriberService {
               aria.includes('transcript') ||
               aria.includes('transcrição')
             );
-          }) as HTMLElement;
+          });
         }
 
         if (btn && btn.offsetParent !== null) {
@@ -204,12 +208,13 @@ export class YouTubeTranscriberService {
 
       // 8. Extract transcript segments
       const segments = await page.evaluate(() => {
+        // @ts-expect-error - Browser context DOM manipulation
         const elements = document.querySelectorAll(
           '#segments-container ytd-transcript-segment-renderer yt-formatted-string.segment-text'
         );
         return Array.from(elements)
-          .map(el => el.textContent?.trim() || '')
-          .filter(text => text.length > 0);
+          .map((el: any) => el.textContent?.trim() || '')
+          .filter((text: string) => text.length > 0);
       });
 
       if (segments.length === 0) {
