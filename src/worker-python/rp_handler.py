@@ -40,20 +40,30 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_container_cpu_quota() -> Optional[float]:
+def get_container_cpu_quota() -> Optional[int]:
     """
-    Read CPU quota from cgroup (container CPU limit)
+    Get CPU quota allocated to container using RunPod environment variables
+
+    Priority:
+      1. RUNPOD_CPU_COUNT (official RunPod env var)
+      2. cgroup v2 (/sys/fs/cgroup/cpu.max)
+      3. cgroup v1 (/sys/fs/cgroup/cpu/cpu.cfs_quota_us)
 
     Returns:
-        Number of vCPUs allocated to container, or None if not in container
+        Number of vCPUs allocated to container, or None if not detected
 
     Example:
-        /sys/fs/cgroup/cpu/cpu.cfs_quota_us = 800000
-        /sys/fs/cgroup/cpu/cpu.cfs_period_us = 100000
-        vCPUs = 800000 / 100000 = 8
+        RUNPOD_CPU_COUNT=9 → returns 9
     """
     try:
-        # Try cgroup v2 first (newer Linux)
+        # Priority 1: RunPod official environment variable
+        runpod_cpu_count = os.getenv('RUNPOD_CPU_COUNT')
+        if runpod_cpu_count:
+            cpu_count = int(runpod_cpu_count)
+            logger.info(f"✅ RunPod CPU count: {cpu_count} vCPUs (RUNPOD_CPU_COUNT)")
+            return cpu_count
+
+        # Priority 2: cgroup v2 (newer Linux)
         cpu_max_path = Path('/sys/fs/cgroup/cpu.max')
         if cpu_max_path.exists():
             content = cpu_max_path.read_text().strip()
@@ -62,11 +72,11 @@ def get_container_cpu_quota() -> Optional[float]:
             if len(parts) == 2 and parts[0] != 'max':
                 quota = int(parts[0])
                 period = int(parts[1])
-                vcpus = quota / period
-                logger.info(f"📊 cgroup v2: quota={quota}, period={period}, vCPUs={vcpus:.1f}")
+                vcpus = int(quota / period)
+                logger.info(f"📊 cgroup v2: quota={quota}, period={period}, vCPUs={vcpus}")
                 return vcpus
 
-        # Try cgroup v1 (older Linux, Docker default)
+        # Priority 3: cgroup v1 (older Linux, Docker default)
         quota_path = Path('/sys/fs/cgroup/cpu/cpu.cfs_quota_us')
         period_path = Path('/sys/fs/cgroup/cpu/cpu.cfs_period_us')
 
@@ -76,15 +86,15 @@ def get_container_cpu_quota() -> Optional[float]:
 
             # quota = -1 means no limit
             if quota > 0:
-                vcpus = quota / period
-                logger.info(f"📊 cgroup v1: quota={quota}, period={period}, vCPUs={vcpus:.1f}")
+                vcpus = int(quota / period)
+                logger.info(f"📊 cgroup v1: quota={quota}, period={period}, vCPUs={vcpus}")
                 return vcpus
 
-        logger.info("📊 No cgroup CPU quota found (not in container or no limit)")
+        logger.warning("⚠️ No container CPU quota found (RUNPOD_CPU_COUNT not set, cgroup not available)")
         return None
 
     except Exception as e:
-        logger.warning(f"⚠️ Failed to read cgroup CPU quota: {e}")
+        logger.warning(f"⚠️ Failed to detect container CPU quota: {e}")
         return None
 
 
@@ -92,9 +102,10 @@ def calculate_optimal_batch_size() -> int:
     """
     Calculate optimal BATCH_SIZE based on available CPU resources
 
-    Container-aware detection:
-      1. Read cgroup CPU quota (container vCPUs) - PREFERRED
-      2. Fallback to psutil.cpu_count() (may return host CPUs)
+    Container-aware detection (priority order):
+      1. RUNPOD_CPU_COUNT environment variable (official RunPod)
+      2. cgroup CPU quota (container limits)
+      3. System CPU count (fallback, may be inaccurate in containers)
 
     Strategy:
       - Zoompan filter is CPU-bound and single-threaded per task
@@ -110,8 +121,8 @@ def calculate_optimal_batch_size() -> int:
 
         if container_vcpus is not None:
             # Use container vCPUs (accurate)
-            cpu_count = int(container_vcpus)
-            detection_method = "container cgroup"
+            cpu_count = container_vcpus
+            detection_method = "RunPod/container"
         else:
             # Fallback to system detection (may be host CPUs in containers!)
             cpu_count = multiprocessing.cpu_count()
@@ -119,7 +130,7 @@ def calculate_optimal_batch_size() -> int:
             logger.warning(f"⚠️ Using system CPU count (may be inaccurate in containers): {cpu_count}")
 
         # Formula: 1.5x vCPUs (overlap CPU work with I/O)
-        # For 8 vCPUs: 1.5 * 8 = 12
+        # For 9 vCPUs: 1.5 * 9 = 13.5 → 13
         optimal = int(cpu_count * 1.5)
 
         # Clamp between 2 and 16
