@@ -4,19 +4,12 @@
   "description": "Video processing API with RunPod Serverless GPU auto-scaling",
   "main": "dist/orchestrator/index.js",
   "scripts": {
-    "build": "npm run build:orchestrator && npm run build:worker",
+    "build": "npm run build:orchestrator",
     "build:orchestrator": "tsc -p tsconfig.orchestrator.json",
-    "build:worker": "tsc -p tsconfig.worker.json",
-    "dev:orchestrator": "ts-node-dev --respawn --transpile-only src/orchestrator/index.ts",
-    "dev:worker": "ts-node-dev --respawn --transpile-only src/worker/index.ts",
-    "start:orchestrator": "node dist/orchestrator/index.js",
-    "start:worker": "node dist/worker/index.js",
-    "docker:build:worker": "docker build -f docker/worker.Dockerfile -t api-gpu-worker:latest .",
-    "docker:push:worker": "docker push api-gpu-worker:latest",
-    "docker:build:orchestrator": "docker build -f docker/orchestrator.Dockerfile -t api-gpu-orchestrator:latest .",
+    "dev": "ts-node-dev --respawn --transpile-only src/orchestrator/index.ts",
+    "start": "node dist/orchestrator/index.js",
     "clean": "rimraf dist",
-    "lint": "eslint src --ext .ts",
-    "test": "jest"
+    "lint": "eslint src --ext .ts"
   },
   "keywords": [
     "video",
