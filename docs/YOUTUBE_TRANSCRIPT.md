@@ -175,10 +175,14 @@ BROWSER_POOL_SIZE=3                # Número de browsers no pool
 MAX_CONTEXTS_PER_BROWSER=5         # Máximo de contextos por browser
 
 # Redis Cache (opcional - melhora performance)
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=                    # Opcional
-REDIS_DB=0
+# Opção 1: Connection string completa (RECOMENDADO)
+REDIS_URL=redis://default:password@host:6379
+
+# Opção 2: Variáveis individuais (fallback se REDIS_URL não definido)
+# REDIS_HOST=localhost
+# REDIS_PORT=6379
+# REDIS_PASSWORD=
+# REDIS_DB=0
 ```
 
 ### Instalação do Playwright
