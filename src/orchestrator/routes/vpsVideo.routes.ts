@@ -11,15 +11,19 @@ import {
   validateRequest,
   img2VidRequestSchema,
   addAudioRequestSchema,
-  concatenateRequestSchema
+  concatenateRequestSchema,
+  youtubeTranscriptRequestSchema
 } from '../../shared/middleware/validation';
 import {
   Img2VidRequestAsync,
   AddAudioRequestAsync,
-  ConcatenateRequestAsync
+  ConcatenateRequestAsync,
+  YouTubeTranscriptRequest,
+  YouTubeTranscriptResponse
 } from '../../shared/types';
 import Joi from 'joi';
 import { WebhookService } from '../queue/webhookService';
+import { youtubeTranscriberService } from '../services/youtube/transcriber.service';
 
 const router = Router();
 
@@ -437,6 +441,57 @@ router.post(
         error: 'Job creation failed',
         message: error instanceof Error ? error.message : 'Unknown error'
       });
+    }
+  }
+);
+
+// ============================================
+// POST /vps/video/transcribe_youtube
+// Extract auto-generated YouTube transcript (captions)
+// No webhook needed - returns result immediately
+// ============================================
+
+router.post(
+  '/vps/video/transcribe_youtube',
+  authenticateApiKey,
+  validateRequest(youtubeTranscriptRequestSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { url }: YouTubeTranscriptRequest = req.body;
+
+      logger.info('🎬 YouTube transcript request received', {
+        url,
+        ip: req.ip
+      });
+
+      // Execute transcript extraction (with caching)
+      const result: YouTubeTranscriptResponse = await youtubeTranscriberService.transcribe(url);
+
+      const statusCode = result.ok ? 200 : 400;
+
+      logger.info(`${result.ok ? '✅' : '❌'} YouTube transcript ${result.ok ? 'completed' : 'failed'}`, {
+        url,
+        ok: result.ok,
+        segmentsCount: result.segments_count,
+        cached: result.cached,
+        executionTimeMs: result.execution_time_ms,
+        error: result.error
+      });
+
+      res.status(statusCode).json(result);
+
+    } catch (error) {
+      logger.error('❌ YouTube transcript error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        ip: req.ip
+      });
+
+      res.status(500).json({
+        ok: false,
+        source: req.body.url || 'unknown',
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : 'Unknown error occurred'
+      } as YouTubeTranscriptResponse);
     }
   }
 );

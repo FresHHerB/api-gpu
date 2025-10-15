@@ -31,6 +31,10 @@ import { RunPodService } from './services/runpodService';
 // Importar VPS local worker
 import { LocalWorkerService } from './services/localWorkerService';
 
+// Importar YouTube services
+import { browserPool } from './services/youtube/browser-pool';
+import { cacheService } from './services/youtube/cache.service';
+
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const OUTPUT_DIR = path.join(process.cwd(), 'public', 'output');
@@ -88,6 +92,20 @@ async function initializeLocalWorkerService() {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
     throw error;
+  }
+}
+
+async function initializeBrowserPool() {
+  try {
+    // Initialize Playwright browser pool for YouTube transcript extraction
+    await browserPool.initialize();
+
+    logger.info('✅ Browser Pool initialized successfully');
+  } catch (error) {
+    logger.error('Failed to initialize Browser Pool', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+    // Non-critical - YouTube transcription will be disabled but other features work
   }
 }
 
@@ -210,7 +228,8 @@ app.get('/', (_req, res) => {
         img2vid: 'POST /vps/video/img2vid (VPS CPU, webhook_url required, id_roteiro optional)',
         addaudio: 'POST /vps/video/addaudio (VPS CPU, webhook_url required, id_roteiro optional)',
         concatenate: 'POST /vps/video/concatenate (VPS CPU, webhook_url required, id_roteiro optional)',
-        captionStyle: 'POST /vps/video/caption_style (VPS CPU, webhook_url required, type: segments|highlight)'
+        captionStyle: 'POST /vps/video/caption_style (VPS CPU, webhook_url required, type: segments|highlight)',
+        youtubeTranscript: 'POST /vps/video/transcribe_youtube (Extract auto-generated YouTube captions, returns immediately)'
       },
       jobs: {
         status: 'GET /jobs/:jobId (check job status with progress)',
@@ -265,6 +284,9 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
   // Initialize local worker service for VPS jobs
   await initializeLocalWorkerService();
 
+  // Initialize browser pool for YouTube transcript extraction
+  await initializeBrowserPool();
+
   // Start cleanup scheduler for old videos
   startCleanupScheduler();
 });
@@ -283,7 +305,7 @@ logger.info('⏱️ Server timeouts configured', {
 });
 
 // Graceful shutdown
-const gracefulShutdown = (signal: string) => {
+const gracefulShutdown = async (signal: string) => {
   logger.info(`📴 Shutdown initiated - Signal: ${signal}`);
 
   // Stop local worker service
@@ -297,6 +319,14 @@ const gracefulShutdown = (signal: string) => {
     logger.info('⏸️ Stopping queue system...');
     queueSystem.stop();
   }
+
+  // Cleanup browser pool
+  logger.info('🧹 Cleaning up browser pool...');
+  await browserPool.cleanup();
+
+  // Cleanup cache service
+  logger.info('🧹 Cleaning up cache service...');
+  await cacheService.cleanup();
 
   server.close((err) => {
     if (err) {

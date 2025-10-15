@@ -423,3 +423,22 @@ export interface JobStatusResponse {
   completedAt?: string;
   estimatedCompletion?: string;
 }
+
+// ============================================
+// YouTube Transcript Types
+// ============================================
+
+export interface YouTubeTranscriptRequest {
+  url: string; // YouTube video URL (youtube.com/watch?v=... or youtu.be/...)
+}
+
+export interface YouTubeTranscriptResponse {
+  ok: boolean;
+  source: string; // Original video URL
+  segments_count?: number; // Number of transcript segments
+  transcript_text?: string; // Full transcript as continuous text
+  raw_segments?: string[]; // Individual transcript segments
+  error?: string; // Error message if ok=false
+  cached?: boolean; // Whether result came from cache
+  execution_time_ms?: number; // Execution time in milliseconds
+}

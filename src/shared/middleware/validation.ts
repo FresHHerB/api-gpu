@@ -106,6 +106,15 @@ export const captionStyledRequestSchema = Joi.object({
   }).optional()
 });
 
+export const youtubeTranscriptRequestSchema = Joi.object({
+  url: Joi.string()
+    .pattern(/^https?:\/\/(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/).+/)
+    .required()
+    .messages({
+      'string.pattern.base': 'URL must be a valid YouTube video URL (youtube.com/watch?v=... or youtu.be/...)'
+    })
+});
+
 // ============================================
 // Validation Middleware Factory
 // ============================================
