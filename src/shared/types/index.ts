@@ -442,3 +442,106 @@ export interface YouTubeTranscriptResponse {
   cached?: boolean; // Whether result came from cache
   execution_time_ms?: number; // Execution time in milliseconds
 }
+
+// ============================================
+// Image Generation Types
+// ============================================
+
+export interface SceneData {
+  index: number;
+  texto: string;
+}
+
+export interface PromptData {
+  index: number;
+  prompt: string;
+}
+
+export interface GeneratedImageData {
+  index: number;
+  imageURL: string;
+  prompt: string;
+}
+
+// OpenRouter Types
+export interface OpenRouterMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface OpenRouterRequest {
+  model: string;
+  messages: OpenRouterMessage[];
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface OpenRouterResponse {
+  id: string;
+  object: string;
+  created: number;
+  model: string;
+  choices: {
+    index: number;
+    message: {
+      role: string;
+      content: string;
+    };
+    finish_reason: string;
+  }[];
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+// Request/Response Types for Image Generation Endpoints
+export interface GerarPromptsRequest {
+  cenas: SceneData[];
+  estilo: string;
+  detalhe_estilo: string;
+  roteiro: string;
+  agente: string;
+}
+
+export interface GerarPromptsResponse {
+  code: number;
+  message: string;
+  prompts: PromptData[];
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: {
+    totalScenes: number;
+    promptsGenerated: number;
+    successRate: string;
+  };
+}
+
+export interface GerarImagensRequest {
+  prompts: PromptData[];
+  image_model: string;
+  altura: number;
+  largura: number;
+}
+
+export interface GerarImagensResponse {
+  code: number;
+  message: string;
+  images: GeneratedImageData[];
+  execution: {
+    startTime: string;
+    endTime: string;
+    durationMs: number;
+    durationSeconds: number;
+  };
+  stats: {
+    totalPrompts: number;
+    imagesGenerated: number;
+    successRate: string;
+  };
+}

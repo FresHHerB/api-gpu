@@ -20,6 +20,7 @@ import transcriptionRoutes from './routes/transcription';
 import captionUnifiedRoutes, { setJobService as setCaptionJobService } from './routes/caption-unified.routes';
 import vpsVideoRoutes, { setJobService as setVPSJobService } from './routes/vpsVideo.routes';
 import jobRoutes, { setJobService } from './routes/jobs.routes';
+import imageGenerationRoutes from './routes/imageGeneration.routes';
 
 // Importar cleanup scheduler
 import { startCleanupScheduler } from './utils/cleanup';
@@ -199,6 +200,9 @@ app.use('/', transcriptionRoutes);
 // Caption style routes (unified endpoint)
 app.use('/', captionUnifiedRoutes);
 
+// Image generation routes (OpenRouter + Runware)
+app.use('/', imageGenerationRoutes);
+
 // Job management routes
 app.use('/', jobRoutes);
 
@@ -230,6 +234,10 @@ app.get('/', (_req, res) => {
         concatenate: 'POST /vps/video/concatenate (VPS CPU, webhook_url required, id_roteiro optional)',
         captionStyle: 'POST /vps/video/caption_style (VPS CPU, webhook_url required, type: segments|highlight)',
         youtubeTranscript: 'POST /vps/video/transcribe_youtube (Extract auto-generated YouTube captions, returns immediately)'
+      },
+      imageGeneration: {
+        gerarPrompts: 'POST /vps/imagem/gerarPrompts (Generate prompts with OpenRouter, returns immediately, requires X-API-Key)',
+        gerarImagens: 'POST /vps/imagem/gerarImagens (Generate images with Runware, returns immediately, requires X-API-Key)'
       },
       jobs: {
         status: 'GET /jobs/:jobId (check job status with progress)',
