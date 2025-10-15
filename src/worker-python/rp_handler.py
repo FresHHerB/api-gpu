@@ -40,32 +40,92 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def get_container_cpu_quota() -> Optional[float]:
+    """
+    Read CPU quota from cgroup (container CPU limit)
+
+    Returns:
+        Number of vCPUs allocated to container, or None if not in container
+
+    Example:
+        /sys/fs/cgroup/cpu/cpu.cfs_quota_us = 800000
+        /sys/fs/cgroup/cpu/cpu.cfs_period_us = 100000
+        vCPUs = 800000 / 100000 = 8
+    """
+    try:
+        # Try cgroup v2 first (newer Linux)
+        cpu_max_path = Path('/sys/fs/cgroup/cpu.max')
+        if cpu_max_path.exists():
+            content = cpu_max_path.read_text().strip()
+            # Format: "quota period" (e.g., "800000 100000")
+            parts = content.split()
+            if len(parts) == 2 and parts[0] != 'max':
+                quota = int(parts[0])
+                period = int(parts[1])
+                vcpus = quota / period
+                logger.info(f"📊 cgroup v2: quota={quota}, period={period}, vCPUs={vcpus:.1f}")
+                return vcpus
+
+        # Try cgroup v1 (older Linux, Docker default)
+        quota_path = Path('/sys/fs/cgroup/cpu/cpu.cfs_quota_us')
+        period_path = Path('/sys/fs/cgroup/cpu/cpu.cfs_period_us')
+
+        if quota_path.exists() and period_path.exists():
+            quota = int(quota_path.read_text().strip())
+            period = int(period_path.read_text().strip())
+
+            # quota = -1 means no limit
+            if quota > 0:
+                vcpus = quota / period
+                logger.info(f"📊 cgroup v1: quota={quota}, period={period}, vCPUs={vcpus:.1f}")
+                return vcpus
+
+        logger.info("📊 No cgroup CPU quota found (not in container or no limit)")
+        return None
+
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to read cgroup CPU quota: {e}")
+        return None
+
+
 def calculate_optimal_batch_size() -> int:
     """
     Calculate optimal BATCH_SIZE based on available CPU resources
 
+    Container-aware detection:
+      1. Read cgroup CPU quota (container vCPUs) - PREFERRED
+      2. Fallback to psutil.cpu_count() (may return host CPUs)
+
     Strategy:
       - Zoompan filter is CPU-bound and single-threaded per task
-      - Optimal: 1.5x CPU cores (to account for I/O wait time)
+      - Optimal: 1.5x vCPUs (to account for I/O wait time)
       - Min: 2, Max: 16 (avoid excessive thread contention)
 
     Returns:
         Optimal batch size for parallel image processing
     """
     try:
-        cpu_count = multiprocessing.cpu_count()
+        # Try to get container CPU quota first (accurate for containers)
+        container_vcpus = get_container_cpu_quota()
 
-        # Get physical cores (more accurate than logical cores for CPU-bound tasks)
-        physical_cores = psutil.cpu_count(logical=False) or cpu_count
+        if container_vcpus is not None:
+            # Use container vCPUs (accurate)
+            cpu_count = int(container_vcpus)
+            detection_method = "container cgroup"
+        else:
+            # Fallback to system detection (may be host CPUs in containers!)
+            cpu_count = multiprocessing.cpu_count()
+            detection_method = "system fallback"
+            logger.warning(f"⚠️ Using system CPU count (may be inaccurate in containers): {cpu_count}")
 
-        # Formula: 1.5x physical cores (overlap CPU work with I/O)
-        # For 12 vCPUs (6 physical): 1.5 * 6 = 9
-        optimal = int(physical_cores * 1.5)
+        # Formula: 1.5x vCPUs (overlap CPU work with I/O)
+        # For 8 vCPUs: 1.5 * 8 = 12
+        optimal = int(cpu_count * 1.5)
 
         # Clamp between 2 and 16
         batch_size = max(2, min(16, optimal))
 
-        logger.info(f"🔢 CPU cores detected: {cpu_count} logical, {physical_cores} physical")
+        logger.info(f"🔢 vCPUs detected: {cpu_count} ({detection_method})")
         logger.info(f"🎯 Calculated optimal BATCH_SIZE: {batch_size}")
 
         return batch_size
