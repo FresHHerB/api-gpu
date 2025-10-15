@@ -21,13 +21,14 @@ export class CacheService {
   private readonly defaultTTL = 86400; // 24 hours
 
   constructor() {
-    this.enabled = process.env.REDIS_HOST !== undefined;
+    // Enable if REDIS_URL or REDIS_HOST is set
+    this.enabled = !!(process.env.REDIS_URL || process.env.REDIS_HOST);
 
     if (this.enabled) {
       this.initializeRedis();
     } else {
       logger.warn('⚠️ Redis not configured - cache disabled', {
-        hint: 'Set REDIS_HOST environment variable to enable caching'
+        hint: 'Set REDIS_URL or REDIS_HOST environment variable to enable caching'
       });
     }
   }
@@ -37,19 +38,33 @@ export class CacheService {
    */
   private initializeRedis(): void {
     try {
-      this.redis = new Redis({
-        host: process.env.REDIS_HOST || 'localhost',
-        port: parseInt(process.env.REDIS_PORT || '6379'),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || '0'),
-        retryStrategy: (times) => {
-          if (times > 3) {
-            logger.error('❌ Redis connection failed after 3 retries');
-            return null; // Stop retrying
+      // Prefer REDIS_URL (complete connection string) over individual variables
+      if (process.env.REDIS_URL) {
+        this.redis = new Redis(process.env.REDIS_URL, {
+          retryStrategy: (times) => {
+            if (times > 3) {
+              logger.error('❌ Redis connection failed after 3 retries');
+              return null; // Stop retrying
+            }
+            return Math.min(times * 100, 3000); // Exponential backoff
           }
-          return Math.min(times * 100, 3000); // Exponential backoff
-        }
-      });
+        });
+      } else {
+        // Fallback to individual environment variables
+        this.redis = new Redis({
+          host: process.env.REDIS_HOST || 'localhost',
+          port: parseInt(process.env.REDIS_PORT || '6379'),
+          password: process.env.REDIS_PASSWORD,
+          db: parseInt(process.env.REDIS_DB || '0'),
+          retryStrategy: (times) => {
+            if (times > 3) {
+              logger.error('❌ Redis connection failed after 3 retries');
+              return null; // Stop retrying
+            }
+            return Math.min(times * 100, 3000); // Exponential backoff
+          }
+        });
+      }
 
       this.redis.on('connect', () => {
         logger.info('✅ Redis connected successfully');
