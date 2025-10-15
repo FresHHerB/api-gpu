@@ -559,9 +559,11 @@ export class LocalVideoProcessor {
       metadata: imageMetadata
     });
 
-    // Ken Burns parameters
+    // Ken Burns parameters - use FLOAT for precise animation timing
     const fps = 24;
-    const totalFrames = Math.round(image.duracao * fps);
+    // No rounding - keep precise float value to ensure animation completes exactly at video end
+    // e.g., 3.33s * 24fps = 79.92 frames (precise, not 80)
+    const totalFrames = image.duracao * fps;
 
     // Upscale 6x for smooth zoom (balanced quality and performance)
     const upscaleFactor = 6;

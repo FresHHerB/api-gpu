@@ -422,7 +422,8 @@ def image_to_video(
         image_metadata = get_image_metadata(image_path)
 
         # Zoom parameters - Optimized upscale (6x) for balanced quality and performance
-        total_frames = int(frame_rate * duracao)
+        # Use FLOAT for precise animation timing - no rounding to ensure animation completes exactly at video end
+        total_frames = frame_rate * duracao  # e.g., 24 * 3.33 = 79.92 frames (precise)
         upscale_factor = 6  # Balanced upscale: 6x for good quality and faster processing
 
         # Use actual image dimensions if available, otherwise default to 1920x1080
