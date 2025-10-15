@@ -134,7 +134,7 @@ export class YouTubeTranscriberService {
         // No consent popup or already dismissed
       }
 
-      // 4. Scroll to description area
+      // 4. Scroll to transcript section
       await page.evaluate(() => {
         // @ts-expect-error - Browser context DOM manipulation
         const transcriptSection = document.querySelector('ytd-video-description-transcript-section-renderer');
@@ -147,43 +147,29 @@ export class YouTubeTranscriberService {
       });
       await page.waitForTimeout(1500);
 
-      // 5. Try to expand description (optional)
-      try {
-        const expandButton = await page.$('tp-yt-paper-button#expand, #expand, button[aria-label*="mais"]');
-        if (expandButton) {
-          await expandButton.click();
-          await page.waitForTimeout(500);
+      // 5. Expand description to reveal transcript button (CRITICAL)
+      const expanded = await page.evaluate(() => {
+        // @ts-expect-error - Browser context DOM manipulation
+        const expandBtn = document.querySelector('#expand');
+        if (expandBtn && (expandBtn as any).offsetParent !== null) {
+          (expandBtn as any).click();
+          return true;
         }
-      } catch (e) {
-        // Not critical
+        return false;
+      });
+
+      if (expanded) {
+        await page.waitForTimeout(800);
+        logger.debug('Description expanded');
       }
 
-      // 6. Click on transcript button
+      // 6. Click on transcript button using structural selector
       const clicked = await page.evaluate(() => {
         // @ts-expect-error - Browser context DOM manipulation
-        // Strategy 1: Direct selector (most reliable)
-        let btn = document.querySelector('ytd-video-description-transcript-section-renderer button');
+        const btn = document.querySelector('ytd-video-description-transcript-section-renderer button');
 
-        // Strategy 2: Search by text content
-        if (!btn) {
-          // @ts-expect-error - Browser context DOM manipulation
-          const buttons = Array.from(document.querySelectorAll('button'));
-          btn = buttons.find((b: any) => {
-            const text = (b.textContent || '').toLowerCase();
-            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-            return (
-              text.includes('show transcript') ||
-              text.includes('mostrar transcrição') ||
-              text.includes('mostrar transcripción') ||
-              text.includes('transcript') ||
-              aria.includes('transcript') ||
-              aria.includes('transcrição')
-            );
-          });
-        }
-
-        if (btn && btn.offsetParent !== null) {
-          btn.click();
+        if (btn && (btn as any).offsetParent !== null) {
+          (btn as any).click();
           return true;
         }
         return false;
@@ -200,19 +186,21 @@ export class YouTubeTranscriberService {
 
       logger.debug('Transcript button clicked, waiting for segments...');
 
-      // 7. Wait for transcript segments to load
+      // 7. Wait for transcript segments container and renderers to load
+      await page.waitForSelector('#segments-container', { timeout: 5000 });
       await page.waitForSelector(
         '#segments-container ytd-transcript-segment-renderer',
         { timeout: 10000 }
       );
 
-      // 8. Extract transcript segments
+      // 8. Extract transcript segments using structural selector
       const segments = await page.evaluate(() => {
         // @ts-expect-error - Browser context DOM manipulation
-        const elements = document.querySelectorAll(
+        const segmentElements = document.querySelectorAll(
           '#segments-container ytd-transcript-segment-renderer yt-formatted-string.segment-text'
         );
-        return Array.from(elements)
+
+        return Array.from(segmentElements)
           .map((el: any) => el.textContent?.trim() || '')
           .filter((text: string) => text.length > 0);
       });
