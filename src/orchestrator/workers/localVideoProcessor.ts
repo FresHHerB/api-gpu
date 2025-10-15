@@ -431,6 +431,15 @@ export class LocalVideoProcessor {
   }
 
   /**
+   * Normalize file path for FFmpeg filters
+   * Replicates GPU worker's path normalization: replace backslashes and escape colons
+   * Critical for cross-platform compatibility (Windows paths with drive letters)
+   */
+  private normalizePathForFFmpeg(filePath: string): string {
+    return filePath.replace(/\\/g, '/').replace(/:/g, '\\:');
+  }
+
+  /**
    * Process Caption Style (Segments)
    */
   async processCaptionSegments(data: any): Promise<{ video_url: string; pathRaiz?: string }> {
@@ -455,10 +464,13 @@ export class LocalVideoProcessor {
       const assPath = path.join(workPath, 'styled.ass');
       await this.generateASSFromSRT(srtPath, assPath, data.style || {});
 
+      // Normalize ASS path for FFmpeg (cross-platform compatibility)
+      const normalizedAssPath = this.normalizePathForFFmpeg(assPath);
+
       // Burn subtitles with libx264 (CPU)
       const ffmpegArgs = [
         '-i', videoPath,
-        '-vf', `ass=${assPath}`,
+        '-vf', `ass=${normalizedAssPath}`,
         '-c:v', 'libx264',
         '-preset', 'medium',
         '-crf', '23',
@@ -521,10 +533,13 @@ export class LocalVideoProcessor {
       const assPath = path.join(workPath, 'karaoke.ass');
       await this.generateASSKaraoke(wordsPath, assPath, data.style || {});
 
+      // Normalize ASS path for FFmpeg (cross-platform compatibility)
+      const normalizedAssPath = this.normalizePathForFFmpeg(assPath);
+
       // Burn subtitles
       const ffmpegArgs = [
         '-i', videoPath,
-        '-vf', `ass=${assPath}`,
+        '-vf', `ass=${normalizedAssPath}`,
         '-c:v', 'libx264',
         '-preset', 'medium',
         '-crf', '23',
