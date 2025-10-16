@@ -47,6 +47,7 @@ interface SegmentStyle {
     alignment?: number;
     marginVertical?: number;
   };
+  uppercase?: boolean;
 }
 
 interface HighlightStyle {
@@ -72,6 +73,7 @@ interface HighlightStyle {
   words_per_line?: number;
   max_lines?: number;
   alignment?: number;
+  uppercase?: boolean;
 }
 
 // ============================================
@@ -241,6 +243,9 @@ export async function generateASSFromSRT(
   const alignment = style.position?.alignment || 2;
   const marginV = style.position?.marginVertical || 20;
 
+  // Extract uppercase option (default: false)
+  const uppercase = style.uppercase ?? false;
+
   // Convert hex colors to ASS format
   const primaryRgb = hexToRgb(primaryColor);
   const primaryAss = rgbToAssColor(primaryRgb.r, primaryRgb.g, primaryRgb.b);
@@ -298,7 +303,14 @@ export async function generateASSFromSRT(
   for (const seg of segments) {
     const startTime = formatAssTime(seg.start);
     const endTime = formatAssTime(seg.end);
-    const text = seg.text.replace(/\n/g, '\\N'); // ASS line break
+    let text = uppercase ? seg.text.toUpperCase() : seg.text;
+    text = text.replace(/\n/g, '\\N'); // ASS line break
+
+    // Force line break after period (except for ellipsis)
+    // Protect ellipsis first
+    text = text.replace(/\.\.\./g, '<!ELLIPSIS!>');
+    text = text.replace(/\. /g, '.\\N');  // Period + space = line break
+    text = text.replace(/<!ELLIPSIS!>/g, '...');  // Restore ellipsis
 
     const dialogueLine = `Dialogue: 0,${startTime},${endTime},Default,,0,0,0,,${text}`;
     assLines.push(dialogueLine);
@@ -366,9 +378,14 @@ function groupWordsIntoDialogues(
 
     // Check line break
     const lineDuration = word.end - lineStart;
+
+    // Force line break if word ends with period (never in middle of line)
+    const endsWithPeriod = word.word.trim().endsWith('.');
+
     const shouldBreakLine = (
       currentLine.length >= WORDS_PER_LINE ||
-      lineDuration >= MAX_DURATION_PER_LINE
+      lineDuration >= MAX_DURATION_PER_LINE ||
+      endsWithPeriod  // Always break after period
     );
 
     if (shouldBreakLine) {
@@ -463,6 +480,9 @@ export async function generateASSHighlight(
 
   const alignment = style.alignment || 2;
 
+  // Extract uppercase option (default: false)
+  const uppercase = style.uppercase ?? false;
+
   // Convert colors to ASS format
   const textColor = rgbToAssColor(textR, textG, textB);
   const highlightTextColor = rgbToAssColor(highlightTextR, highlightTextG, highlightTextB);
@@ -545,8 +565,6 @@ export async function generateASSHighlight(
   assLines.push('Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text');
 
   // Generate events for each dialogue
-  const UPPERCASE = true;
-
   for (const dialogue of dialogues) {
     // Flatten all words from dialogue
     const allWords: Word[] = [];
@@ -560,7 +578,7 @@ export async function generateASSHighlight(
     // LAYER 0: Base text (always visible)
     const dialogueTextParts: string[] = [];
     for (const lineWords of dialogue.lines) {
-      const lineText = lineWords.map(w => UPPERCASE ? w.word.toUpperCase() : w.word).join(' ');
+      const lineText = lineWords.map(w => uppercase ? w.word.toUpperCase() : w.word).join(' ');
       dialogueTextParts.push(lineText);
     }
 
@@ -581,7 +599,7 @@ export async function generateASSHighlight(
       for (const lineWords of dialogue.lines) {
         const lineParts: string[] = [];
         for (const word of lineWords) {
-          const wordText = UPPERCASE ? word.word.toUpperCase() : word.word;
+          const wordText = uppercase ? word.word.toUpperCase() : word.word;
 
           if (wordIdx === activeIdx) {
             // Active word: use highlight style with custom text color

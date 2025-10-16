@@ -92,6 +92,7 @@ const unifiedCaptionSchema = Joi.object({
   path: Joi.string().required(),
   output_filename: Joi.string().required(),
   type: Joi.string().valid('segments', 'highlight').required(),
+  uppercase: Joi.boolean().default(false),
 
   // Conditional style validation based on type
   style: Joi.when('type', {
@@ -174,7 +175,7 @@ router.post('/runpod/video/caption_style', authenticateApiKey, async (req: Reque
       });
     }
 
-    const { webhook_url, id_roteiro, url_video, url_caption, path, output_filename, type, style } = value;
+    const { webhook_url, id_roteiro, url_video, url_caption, path, output_filename, type, uppercase, style } = value;
 
     // Extract path_raiz from path
     const pathRaiz = extractPathRaiz(path);
@@ -208,7 +209,8 @@ router.post('/runpod/video/caption_style', authenticateApiKey, async (req: Reque
           position: {
             ...style.position,
             alignment
-          }
+          },
+          uppercase
         }
       };
 
@@ -253,7 +255,8 @@ router.post('/runpod/video/caption_style', authenticateApiKey, async (req: Reque
           padding_vertical: style.padding_vertical,
           words_per_line: style.words_per_line,
           max_lines: style.max_lines,
-          alignment
+          alignment,
+          uppercase
         }
       };
     }

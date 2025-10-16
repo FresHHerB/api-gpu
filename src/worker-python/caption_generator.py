@@ -161,6 +161,9 @@ def generate_ass_from_srt(
     alignment = style.get('position', {}).get('alignment', 2)
     margin_v = style.get('position', {}).get('marginVertical', 20)
 
+    # Extract uppercase option (default: False)
+    uppercase = style.get('uppercase', False)
+
     # Convert hex colors to ASS format
     primary_r = int(primary_color[1:3], 16)
     primary_g = int(primary_color[3:5], 16)
@@ -224,7 +227,14 @@ def generate_ass_from_srt(
     for seg in segments:
         start_time = format_ass_time(seg['start'])
         end_time = format_ass_time(seg['end'])
-        text = seg['text'].replace('\n', '\\N')  # ASS line break
+        text = seg['text'].upper() if uppercase else seg['text']
+        text = text.replace('\n', '\\N')  # ASS line break
+
+        # Force line break after period (except for ellipsis)
+        # Protect ellipsis first
+        text = text.replace('...', '<!ELLIPSIS!>')
+        text = text.replace('. ', '.\\N')  # Period + space = line break
+        text = text.replace('<!ELLIPSIS!>', '...')  # Restore ellipsis
 
         dialogue_line = f"Dialogue: 0,{start_time},{end_time},Default,,0,0,0,,{text}"
         ass_lines.append(dialogue_line)
@@ -289,9 +299,14 @@ def group_words_into_dialogues(
 
         # Check line break
         line_duration = word['end'] - line_start
+
+        # Force line break if word ends with period (never in middle of line)
+        ends_with_period = word['word'].rstrip().endswith('.')
+
         should_break_line = (
             len(current_line) >= WORDS_PER_LINE or
-            line_duration >= MAX_DURATION_PER_LINE
+            line_duration >= MAX_DURATION_PER_LINE or
+            ends_with_period  # Always break after period
         )
 
         if should_break_line:
@@ -381,6 +396,9 @@ def generate_ass_highlight(
 
     alignment = style.get('alignment', 2)
 
+    # Extract uppercase option (default: False)
+    uppercase = style.get('uppercase', False)
+
     # Convert colors to ASS format
     text_color = rgb_to_ass_color(text_r, text_g, text_b)
     highlight_text_color = rgb_to_ass_color(highlight_text_r, highlight_text_g, highlight_text_b)
@@ -465,8 +483,6 @@ def generate_ass_highlight(
     ])
 
     # Generate events for each dialogue
-    UPPERCASE = True
-
     for dialogue in dialogues:
         # Flatten all words from dialogue
         all_words = []
@@ -480,7 +496,7 @@ def generate_ass_highlight(
         dialogue_text_parts = []
         for line_words in dialogue['lines']:
             line_text = " ".join([
-                w['word'].upper() if UPPERCASE else w['word']
+                w['word'].upper() if uppercase else w['word']
                 for w in line_words
             ])
             dialogue_text_parts.append(line_text)
@@ -502,7 +518,7 @@ def generate_ass_highlight(
             for line_words in dialogue['lines']:
                 line_parts = []
                 for word in line_words:
-                    word_text = word['word'].upper() if UPPERCASE else word['word']
+                    word_text = word['word'].upper() if uppercase else word['word']
 
                     if word_idx == active_idx:
                         # Active word: use highlight style with custom text color
