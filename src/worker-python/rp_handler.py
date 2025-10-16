@@ -592,7 +592,7 @@ def image_to_video(
         # Use continuous float values for smooth sub-pixel motion
         if zoom_type == "zoomout":
             # ZOOM OUT: Starts zoomed in, ends normal
-            zoom_start = 1.25  # Slower, smoother zoom
+            zoom_start = 1.35  # Slower, smoother zoom
             zoom_end = 1.0
             zoom_diff = zoom_start - zoom_end
             zoom_formula = f"max({zoom_start}-{zoom_diff}*on/{total_frames},{zoom_end})"
@@ -604,7 +604,7 @@ def image_to_video(
             # ZOOM IN + PAN RIGHT
             # Inicia no canto esquerdo (x=0), termina no canto direito (x=x_max)
             zoom_start = 1.0
-            zoom_end = 1.25  # Slower zoom for smoother effect
+            zoom_end = 1.40  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
 
@@ -621,7 +621,7 @@ def image_to_video(
         else:  # "zoomin" (default)
             # ZOOM IN: Starts normal, ends zoomed in
             zoom_start = 1.0
-            zoom_end = 1.25  # Slower zoom for smoother effect
+            zoom_end = 1.40  # Slower zoom for smoother effect
             zoom_diff = zoom_end - zoom_start
             zoom_formula = f"min({zoom_start}+{zoom_diff}*on/{total_frames},{zoom_end})"
             # Centered - no trunc() for smooth motion
