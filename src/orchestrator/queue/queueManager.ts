@@ -14,6 +14,9 @@ export class QueueManager {
   private processing: boolean = false;
   private vpsJobSkipCount: number = 0; // Track consecutive VPS job skips
   private lastVpsSkipTime: number = 0; // Timestamp of last VPS skip
+  private workerWaitCount: number = 0; // Track consecutive "not enough workers" occurrences
+  private lastWorkerWaitJob: string = ''; // Last job that waited for workers
+  private lastWorkerWaitLog: number = 0; // Timestamp of last "not enough workers" log
 
   constructor(storage: JobStorage, runpodService: RunPodService) {
     this.storage = storage;
@@ -113,13 +116,41 @@ export class QueueManager {
       if (workersNeeded > availableWorkers) {
         // Re-enfileirar e aguardar
         await this.storage.enqueueJob(jobId);
-        logger.info('⏳ Not enough workers, re-queuing job', {
-          jobId,
-          needed: workersNeeded,
-          available: availableWorkers
-        });
+
+        // Track consecutive waits for the same job
+        const now = Date.now();
+        const isSameJob = this.lastWorkerWaitJob === jobId;
+        const timeSinceLastLog = now - this.lastWorkerWaitLog;
+
+        if (isSameJob) {
+          this.workerWaitCount++;
+        } else {
+          this.workerWaitCount = 1;
+          this.lastWorkerWaitJob = jobId;
+        }
+
+        // Log only once per second to avoid spam (same job or different jobs)
+        if (timeSinceLastLog > 1000) {
+          logger.info('⏳ Not enough workers, re-queuing job', {
+            jobId,
+            needed: workersNeeded,
+            available: availableWorkers,
+            consecutiveWaits: this.workerWaitCount
+          });
+          this.lastWorkerWaitLog = now;
+        }
+
+        // Add exponential backoff delay to avoid tight loop
+        // Start with 1s, then 2s, then 3s, max 5s
+        const delayMs = Math.min(5000, 1000 * Math.min(5, this.workerWaitCount));
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+
         return;
       }
+
+      // Reset worker wait counter when we successfully process a job
+      this.workerWaitCount = 0;
+      this.lastWorkerWaitJob = '';
 
       // Reservar workers
       const reserved = await this.storage.reserveWorkers(workersNeeded);
