@@ -1258,6 +1258,7 @@ def concatenate_videos_cyclic(
                 trimmed_path = work_dir / f"trimmed_last.mp4"
 
                 # Use re-encode for frame-accurate trim (veryfast is still fast)
+                # IMPORTANT: Must match normalize specs if normalize=true
                 cmd = [
                     'ffmpeg', '-y',
                     '-i', str(video_path),
@@ -1265,13 +1266,25 @@ def concatenate_videos_cyclic(
                     '-c:v', 'libx264',
                     '-preset', 'veryfast',
                     '-profile:v', 'high',
+                    '-level', '4.0',
                     '-pix_fmt', 'yuv420p',
+                ]
+
+                # Match normalization specs if enabled
+                if normalize:
+                    cmd.extend([
+                        '-r', '30',          # Force 30fps (same as normalize)
+                        '-s', '1920x1080',   # Force 1080p (same as normalize)
+                    ])
+
+                cmd.extend([
                     '-c:a', 'aac',
                     '-ar', '48000',
                     '-ac', '2',
+                    '-b:a', '192k',
                     '-movflags', '+faststart',
                     str(trimmed_path)
-                ]
+                ])
 
                 subprocess.run(cmd, capture_output=True, text=True, check=True)
                 trimmed_files.append(trimmed_path)
