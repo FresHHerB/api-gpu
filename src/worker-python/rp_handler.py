@@ -1191,16 +1191,21 @@ def concatenate_videos_cyclic(
             for i, video_path in enumerate(input_files):
                 normalized_path = work_dir / f"normalized_{i}.mp4"
 
+                # Scale to 1080p maintaining aspect ratio, add black bars if needed
+                # force_original_aspect_ratio=decrease: fits inside 1920x1080
+                # pad: adds black bars to reach exact 1920x1080
+                vf_scale_pad = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
+
                 cmd = [
                     'ffmpeg', '-y',
                     '-i', str(video_path),
+                    '-vf', vf_scale_pad,  # Scale + Pad for 1080p without distortion
+                    '-r', '30',           # Force 30fps
                     '-c:v', 'libx264',
                     '-preset', 'veryfast',
                     '-profile:v', 'high',
                     '-level', '4.0',
                     '-pix_fmt', 'yuv420p',
-                    '-r', '30',          # Force 30fps
-                    '-s', '1920x1080',   # Force 1080p
                     '-c:a', 'aac',
                     '-ar', '48000',
                     '-ac', '2',
@@ -1263,21 +1268,23 @@ def concatenate_videos_cyclic(
                     'ffmpeg', '-y',
                     '-i', str(video_path),
                     '-t', f'{duration_to_use:.3f}',  # Millisecond precision
+                ]
+
+                # Match normalization specs if enabled
+                if normalize:
+                    # Same scale+pad as normalize to maintain aspect ratio
+                    vf_scale_pad = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black"
+                    cmd.extend([
+                        '-vf', vf_scale_pad,  # Scale + Pad for 1080p without distortion
+                        '-r', '30',           # Force 30fps (same as normalize)
+                    ])
+
+                cmd.extend([
                     '-c:v', 'libx264',
                     '-preset', 'veryfast',
                     '-profile:v', 'high',
                     '-level', '4.0',
                     '-pix_fmt', 'yuv420p',
-                ]
-
-                # Match normalization specs if enabled
-                if normalize:
-                    cmd.extend([
-                        '-r', '30',          # Force 30fps (same as normalize)
-                        '-s', '1920x1080',   # Force 1080p (same as normalize)
-                    ])
-
-                cmd.extend([
                     '-c:a', 'aac',
                     '-ar', '48000',
                     '-ac', '2',
