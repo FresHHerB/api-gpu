@@ -1128,6 +1128,7 @@ def concatenate_videos_cyclic(
     # Track files for cleanup
     input_files: List[Path] = []
     normalized_files: List[Path] = []
+    trimmed_files: List[Path] = []
 
     try:
         # Step 1: Decode base64 videos
@@ -1251,8 +1252,6 @@ def concatenate_videos_cyclic(
         logger.info(f"✅ Sequence calculated: {segment_count} segments, total duration: {accumulated_duration:.3f}s")
 
         # Step 6: Create trimmed version of partial video (if needed)
-        trimmed_files = []
-
         for idx, (video_path, duration_to_use, is_partial) in enumerate(video_sequence):
             if is_partial:
                 logger.info(f"✂️ Trimming last segment to {duration_to_use:.3f}s for exact match...")
