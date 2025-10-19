@@ -66,6 +66,15 @@ export interface ConcatenateRequest {
   // bucket is read from S3_BUCKET_NAME env var
 }
 
+export interface ConcatVideoAudioRequest {
+  videos_base64: string[]; // Array of base64-encoded videos (will be repeated cyclically)
+  audio_url: string; // URL of MP3 audio file
+  path: string; // S3 path including /videos/ (e.g., "Channel Name/Video Title/videos/")
+  output_filename: string; // Output filename (e.g., "video_final.mp4")
+  normalize?: boolean; // Normalize videos to same spec (enables -c copy, default: true)
+  // bucket is read from S3_BUCKET_NAME env var
+}
+
 // ============================================
 // Caption Style Types
 // ============================================
@@ -303,6 +312,7 @@ export type JobOperation =
   | 'caption_segments'
   | 'caption_highlight'
   | 'concatenate'
+  | 'concat_video_audio'
   // VPS (local CPU-based) operations
   | 'img2vid_vps'
   | 'caption_segments_vps'
@@ -387,6 +397,11 @@ export interface CaptionStyledRequestAsync extends CaptionStyledRequest {
 }
 
 export interface ConcatenateRequestAsync extends ConcatenateRequest {
+  webhook_url: string;
+  id_roteiro?: number;
+}
+
+export interface ConcatVideoAudioRequestAsync extends ConcatVideoAudioRequest {
   webhook_url: string;
   id_roteiro?: number;
 }

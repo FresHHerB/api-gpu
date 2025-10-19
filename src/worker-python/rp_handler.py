@@ -28,6 +28,8 @@ import threading
 import random
 import multiprocessing
 import psutil
+import math
+import base64
 
 # Import caption generator
 from caption_generator import generate_ass_from_srt, generate_ass_highlight
@@ -1088,6 +1090,310 @@ def concatenate_videos(
         concat_list_path.unlink(missing_ok=True)
 
 
+def concatenate_videos_cyclic(
+    videos_base64: List[str],
+    audio_url: str,
+    path: str,
+    output_filename: str,
+    normalize: bool = True,
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """
+    Concatenate base64-encoded videos cyclically to match audio duration
+    Optimized for CPU performance using concat demuxer with -c copy
+
+    Args:
+        videos_base64: List of base64-encoded video files
+        audio_url: URL of the MP3 audio file
+        path: S3 path for upload (e.g., "Channel Name/Video Title/videos/")
+        output_filename: Output filename (e.g., "video_final.mp4")
+        normalize: Normalize videos to same spec (enables -c copy, default: True)
+        worker_id: Worker identifier (optional)
+
+    Returns:
+        Dict with video_url, filename, s3_key, cycle_count
+    """
+    job_id = str(uuid.uuid4())
+    logger.info(f"Starting cyclic concatenation job: {job_id}")
+    logger.info(f"Videos: {len(videos_base64)}, Normalize: {normalize}")
+
+    # Working directories
+    work_dir = WORK_DIR / job_id
+    work_dir.mkdir(exist_ok=True)
+
+    output_path = OUTPUT_DIR / output_filename
+    concat_list_path = work_dir / "concat_list.txt"
+    audio_path = work_dir / "audio.mp3"
+
+    # Track files for cleanup
+    input_files: List[Path] = []
+    normalized_files: List[Path] = []
+
+    try:
+        # Step 1: Decode base64 videos
+        logger.info(f"📦 Decoding {len(videos_base64)} base64 videos...")
+        start_decode = time.time()
+
+        for i, b64_video in enumerate(videos_base64):
+            video_data = base64.b64decode(b64_video)
+            video_path = work_dir / f"video_{i}.mp4"
+
+            with open(video_path, 'wb') as f:
+                f.write(video_data)
+
+            input_files.append(video_path)
+            logger.info(f"  ✓ Video {i}: {video_path.stat().st_size / (1024*1024):.2f} MB")
+
+        decode_time = time.time() - start_decode
+        logger.info(f"✅ Decode complete: {decode_time:.2f}s")
+
+        # Step 2: Download audio and get duration
+        logger.info(f"📥 Downloading audio: {audio_url}")
+        download_file(audio_url, audio_path)
+
+        # Get audio duration using ffprobe
+        probe_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            str(audio_path)
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        audio_duration = float(result.stdout.strip())
+        logger.info(f"🎵 Audio duration: {audio_duration:.2f}s")
+
+        # Step 3: Get video durations with millisecond precision
+        video_durations = []
+        for video_path in input_files:
+            probe_cmd = [
+                'ffprobe', '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                str(video_path)
+            ]
+            result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+            duration = float(result.stdout.strip())
+            video_durations.append(duration)
+            logger.info(f"  ✓ Video {input_files.index(video_path)}: {duration:.3f}s")
+
+        total_cycle_duration = sum(video_durations)
+        logger.info(f"🔄 Total cycle duration: {total_cycle_duration:.3f}s")
+        logger.info(f"🎵 Audio duration: {audio_duration:.3f}s")
+
+        # Step 4: Normalize videos (if enabled)
+        files_to_concat = input_files
+
+        if normalize:
+            logger.info(f"⚙️ Normalizing {len(input_files)} videos to 1080p@30fps, H.264 High...")
+            start_normalize = time.time()
+
+            for i, video_path in enumerate(input_files):
+                normalized_path = work_dir / f"normalized_{i}.mp4"
+
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(video_path),
+                    '-c:v', 'libx264',
+                    '-preset', 'veryfast',
+                    '-profile:v', 'high',
+                    '-level', '4.0',
+                    '-pix_fmt', 'yuv420p',
+                    '-r', '30',          # Force 30fps
+                    '-s', '1920x1080',   # Force 1080p
+                    '-c:a', 'aac',
+                    '-ar', '48000',
+                    '-ac', '2',
+                    '-b:a', '192k',
+                    '-movflags', '+faststart',
+                    str(normalized_path)
+                ]
+
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
+                normalized_files.append(normalized_path)
+                logger.info(f"  ✓ Normalized video {i}: {normalized_path.stat().st_size / (1024*1024):.2f} MB")
+
+            normalize_time = time.time() - start_normalize
+            logger.info(f"✅ Normalization complete: {normalize_time:.2f}s")
+
+            # Use normalized files for concatenation
+            files_to_concat = normalized_files
+
+        # Step 5: Calculate EXACT video sequence to match audio duration
+        logger.info(f"🔢 Calculating exact video sequence to match audio duration...")
+
+        video_sequence = []  # List of (video_path, duration_to_use)
+        accumulated_duration = 0.0
+        video_index = 0
+        segment_count = 0
+
+        while accumulated_duration < audio_duration:
+            current_video = files_to_concat[video_index]
+            current_video_duration = video_durations[video_index]
+            remaining_audio = audio_duration - accumulated_duration
+
+            if remaining_audio >= current_video_duration:
+                # Use full video
+                video_sequence.append((current_video, current_video_duration, False))
+                accumulated_duration += current_video_duration
+                segment_count += 1
+                logger.info(f"  + Segment {segment_count}: video_{video_index} (full, {current_video_duration:.3f}s) → total: {accumulated_duration:.3f}s")
+            else:
+                # Use partial video - need to trim to EXACT duration
+                video_sequence.append((current_video, remaining_audio, True))
+                accumulated_duration += remaining_audio
+                segment_count += 1
+                logger.info(f"  + Segment {segment_count}: video_{video_index} (partial, {remaining_audio:.3f}s) → total: {accumulated_duration:.3f}s")
+                break  # Reached exact audio duration
+
+            # Move to next video (cyclic)
+            video_index = (video_index + 1) % len(files_to_concat)
+
+        logger.info(f"✅ Sequence calculated: {segment_count} segments, total duration: {accumulated_duration:.3f}s")
+
+        # Step 6: Create trimmed version of partial video (if needed)
+        trimmed_files = []
+
+        for idx, (video_path, duration_to_use, is_partial) in enumerate(video_sequence):
+            if is_partial:
+                logger.info(f"✂️ Trimming last segment to {duration_to_use:.3f}s for exact match...")
+                trimmed_path = work_dir / f"trimmed_last.mp4"
+
+                # Use re-encode for frame-accurate trim (veryfast is still fast)
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(video_path),
+                    '-t', f'{duration_to_use:.3f}',  # Millisecond precision
+                    '-c:v', 'libx264',
+                    '-preset', 'veryfast',
+                    '-profile:v', 'high',
+                    '-pix_fmt', 'yuv420p',
+                    '-c:a', 'aac',
+                    '-ar', '48000',
+                    '-ac', '2',
+                    '-movflags', '+faststart',
+                    str(trimmed_path)
+                ]
+
+                subprocess.run(cmd, capture_output=True, text=True, check=True)
+                trimmed_files.append(trimmed_path)
+
+                # Verify trimmed duration
+                probe_cmd = [
+                    'ffprobe', '-v', 'error',
+                    '-show_entries', 'format=duration',
+                    '-of', 'default=noprint_wrappers=1:nokey=1',
+                    str(trimmed_path)
+                ]
+                result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+                actual_duration = float(result.stdout.strip())
+                logger.info(f"  ✓ Trimmed video: requested {duration_to_use:.3f}s, actual {actual_duration:.3f}s")
+
+                # Update sequence to use trimmed file
+                video_sequence[idx] = (trimmed_path, duration_to_use, False)
+
+        # Step 7: Generate concat list with exact sequence
+        logger.info(f"📝 Generating concat list with {len(video_sequence)} segments...")
+
+        with open(concat_list_path, 'w', encoding='utf-8') as f:
+            for video_path, duration, _ in video_sequence:
+                abs_path = str(video_path.absolute()).replace('\\', '/')
+                f.write(f"file '{abs_path}'\n")
+
+        # Step 8: Concatenate with -c copy (all videos already have correct duration)
+        logger.info(f"🎬 Concatenating {len(video_sequence)} segments with -c copy...")
+        start_concat = time.time()
+
+        cmd = [
+            'ffmpeg', '-y',
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', str(concat_list_path),
+            '-i', str(audio_path),
+            '-c:v', 'copy',              # No re-encoding!
+            '-c:a', 'copy',
+            '-map', '0:v:0',
+            '-map', '1:a:0',
+            '-shortest',                 # Stop at shortest stream (ensures perfect sync)
+            '-movflags', '+faststart',
+            str(output_path)
+        ]
+
+        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        concat_time = time.time() - start_concat
+        logger.info(f"✅ Concatenation complete: {concat_time:.2f}s")
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Final video: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Step 9: Verify final video duration matches audio
+        probe_cmd = [
+            'ffprobe', '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            str(output_path)
+        ]
+        result = subprocess.run(probe_cmd, capture_output=True, text=True, check=True)
+        final_video_duration = float(result.stdout.strip())
+        duration_diff = abs(final_video_duration - audio_duration)
+
+        logger.info(f"🔍 Duration verification:")
+        logger.info(f"   Audio: {audio_duration:.3f}s")
+        logger.info(f"   Video: {final_video_duration:.3f}s")
+        logger.info(f"   Diff:  {duration_diff:.3f}s ({duration_diff*1000:.1f}ms)")
+
+        if duration_diff > 0.1:  # Warn if difference > 100ms
+            logger.warning(f"⚠️ Duration difference: {duration_diff*1000:.1f}ms (expected <100ms)")
+
+        # Step 10: Upload to S3
+        if not path.endswith('/'):
+            path = path + '/'
+        s3_key = f"{path}{output_filename}"
+
+        logger.info(f"📤 Uploading to S3: {s3_key}")
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local file after S3 upload
+        output_path.unlink(missing_ok=True)
+
+        # Calculate cycles (for stats)
+        full_cycles = int(accumulated_duration // total_cycle_duration)
+        partial_cycle = (accumulated_duration % total_cycle_duration) > 0.001
+
+        return {
+            'video_url': video_url,
+            'filename': output_filename,
+            's3_key': s3_key,
+            'total_segments': segment_count,
+            'full_cycles': full_cycles,
+            'partial_cycle': partial_cycle,
+            'video_duration': final_video_duration,
+            'audio_duration': audio_duration,
+            'duration_diff_ms': round(duration_diff * 1000, 1)
+        }
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup all temporary files
+        for file in input_files + normalized_files + trimmed_files:
+            file.unlink(missing_ok=True)
+        concat_list_path.unlink(missing_ok=True)
+        if audio_path.exists():
+            audio_path.unlink(missing_ok=True)
+
+        # Remove working directory
+        try:
+            work_dir.rmdir()
+        except:
+            pass
+
+
 def add_caption_segments(
     url_video: str,
     url_srt: str,
@@ -1457,6 +1763,43 @@ def handler(job: Dict) -> Dict[str, Any]:
                 "s3_key": result['s3_key'],
                 "video_count": result['video_count'],
                 "message": f"{result['video_count']} videos concatenated and uploaded to S3 successfully"
+            }
+
+        elif operation == 'concat_video_audio':
+            videos_base64 = job_input.get('videos_base64', [])
+            audio_url = normalize_url(job_input.get('audio_url'))
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
+            normalize = job_input.get('normalize', True)
+
+            if not videos_base64 or not audio_url or not path or not output_filename:
+                raise ValueError("Missing required fields: videos_base64, audio_url, path, output_filename")
+
+            if len(videos_base64) < 1:
+                raise ValueError("At least 1 base64 video is required")
+
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            logger.info(f"🔁 Cyclic concatenation: {len(videos_base64)} videos, normalize={normalize}")
+
+            result = concatenate_videos_cyclic(videos_base64, audio_url, path, output_filename, normalize, worker_id)
+
+            # Build descriptive message
+            cycle_info = f"{result['full_cycles']} full cycles"
+            if result['partial_cycle']:
+                cycle_info += " + 1 partial"
+
+            return {
+                "success": True,
+                "video_url": result['video_url'],
+                "filename": result['filename'],
+                "s3_key": result['s3_key'],
+                "total_segments": result['total_segments'],
+                "full_cycles": result['full_cycles'],
+                "partial_cycle": result['partial_cycle'],
+                "video_duration": result['video_duration'],
+                "audio_duration": result['audio_duration'],
+                "duration_diff_ms": result['duration_diff_ms'],
+                "message": f"Cyclic concatenation complete: {cycle_info}, {result['total_segments']} segments, sync precision: {result['duration_diff_ms']}ms"
             }
 
         else:

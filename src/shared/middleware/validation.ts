@@ -69,6 +69,18 @@ export const concatenateRequestSchema = Joi.object({
   output_filename: Joi.string().required()
 });
 
+export const concatVideoAudioRequestSchema = Joi.object({
+  webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
+  id_roteiro: Joi.number().integer().optional(),
+  videos_base64: Joi.array().items(
+    Joi.string().base64().required()
+  ).min(1).max(10).required(),
+  audio_url: Joi.string().pattern(/^https?:\/\/.+/).required(),
+  path: Joi.string().required(),
+  output_filename: Joi.string().required(),
+  normalize: Joi.boolean().default(true)
+});
+
 export const captionStyledRequestSchema = Joi.object({
   webhook_url: Joi.string().uri().custom(webhookUrlValidator).required(),
   id_roteiro: Joi.number().integer().optional(),

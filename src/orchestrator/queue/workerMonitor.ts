@@ -387,7 +387,8 @@ export class WorkerMonitor {
       addaudio: 5 * 60 * 1000,     // 5 min
       caption_segments: 10 * 60 * 1000,  // 10 min
       caption_highlight: 10 * 60 * 1000,  // 10 min
-      concatenate: 15 * 60 * 1000   // 15 min
+      concatenate: 15 * 60 * 1000,   // 15 min
+      concat_video_audio: 20 * 60 * 1000  // 20 min (base64 decode + normalize + concat)
     };
 
     return timeouts[operation] || 30 * 60 * 1000; // Default: 30 min

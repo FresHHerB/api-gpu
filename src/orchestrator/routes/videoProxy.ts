@@ -8,13 +8,15 @@ import { JobService } from '../queue/jobService';
 import {
   Img2VidRequestAsync,
   AddAudioRequestAsync,
-  ConcatenateRequestAsync
+  ConcatenateRequestAsync,
+  ConcatVideoAudioRequestAsync
 } from '../../shared/types';
 import {
   validateRequest,
   img2VidRequestSchema,
   addAudioRequestSchema,
-  concatenateRequestSchema
+  concatenateRequestSchema,
+  concatVideoAudioRequestSchema
 } from '../../shared/middleware/validation';
 
 const router = Router();
@@ -215,6 +217,58 @@ router.post(
 
     } catch (error) {
       logger.error('❌ Concatenate job creation failed', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+
+      res.status(500).json({
+        error: 'Job creation failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+);
+
+/**
+ * POST /runpod/video/concat_video_audio
+ * Concatenate base64-encoded videos cyclically to match audio duration
+ * Returns immediately with jobId - result sent to webhook_url
+ */
+router.post(
+  '/runpod/video/concat_video_audio',
+  authenticateApiKey,
+  validateRequest(concatVideoAudioRequestSchema),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { webhook_url, id_roteiro, ...data }: ConcatVideoAudioRequestAsync = req.body;
+
+      // Extract path_raiz from path
+      const pathRaiz = extractPathRaiz(data.path);
+
+      logger.info('🔁 ConcatVideoAudio request received', {
+        videoCount: data.videos_base64.length,
+        idRoteiro: id_roteiro,
+        webhookUrl: webhook_url,
+        path: data.path,
+        pathRaiz: pathRaiz,
+        outputFilename: data.output_filename,
+        normalize: data.normalize ?? true,
+        ip: req.ip
+      });
+
+      // Create job and enqueue (with pathRaiz)
+      const job = await jobService.createJob('concat_video_audio', data, webhook_url, id_roteiro, pathRaiz);
+
+      logger.info('✅ ConcatVideoAudio job created', {
+        jobId: job.jobId,
+        status: job.status,
+        videoCount: data.videos_base64.length,
+        pathRaiz: pathRaiz
+      });
+
+      res.status(202).json(job);
+
+    } catch (error) {
+      logger.error('❌ ConcatVideoAudio job creation failed', {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
 
