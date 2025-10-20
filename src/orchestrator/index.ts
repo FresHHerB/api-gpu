@@ -19,6 +19,7 @@ import videoProxyRoutes, { setJobService as setVideoJobService } from './routes/
 import transcriptionRoutes from './routes/transcription';
 import captionUnifiedRoutes, { setJobService as setCaptionJobService } from './routes/caption-unified.routes';
 import vpsVideoRoutes, { setJobService as setVPSJobService } from './routes/vpsVideo.routes';
+import vpsAudioRoutes from './routes/vpsAudio.routes';
 import jobRoutes, { setJobService } from './routes/jobs.routes';
 import imageGenerationRoutes from './routes/imageGeneration.routes';
 
@@ -194,6 +195,9 @@ app.use('/', videoProxyRoutes);
 // VPS Video processing routes (Local CPU)
 app.use('/', vpsVideoRoutes);
 
+// VPS Audio processing routes (Local CPU, synchronous)
+app.use('/', vpsAudioRoutes);
+
 // Transcription routes
 app.use('/', transcriptionRoutes);
 
@@ -220,7 +224,8 @@ app.get('/', (_req, res) => {
     },
     endpoints: {
       sync: {
-        transcribe: 'POST /runpod/audio/transcribe (synchronous RunPod transcription, requires X-API-Key)'
+        transcribe: 'POST /runpod/audio/transcribe (synchronous RunPod transcription, requires X-API-Key)',
+        concatenateAudio: 'POST /vps/audio/concatenate (VPS CPU audio concatenation, returns immediately, no webhook)'
       },
       asyncRunPod: {
         img2vid: 'POST /runpod/video/img2vid (RunPod CPU-optimized, webhook_url required, id_roteiro optional)',
@@ -246,7 +251,8 @@ app.get('/', (_req, res) => {
       },
       health: {
         service: 'GET /health (includes queue stats)',
-        transcribe: 'GET /runpod/audio/transcribe/health (transcription service health)'
+        transcribe: 'GET /runpod/audio/transcribe/health (transcription service health)',
+        audio: 'GET /vps/audio/health (VPS audio processor health)'
       }
     },
     documentation: '/docs'
