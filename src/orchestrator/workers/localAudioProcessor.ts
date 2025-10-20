@@ -70,10 +70,10 @@ export class LocalAudioProcessor {
    */
   private async downloadFile(url: string, dest: string): Promise<void> {
     try {
-      // For local MinIO URLs, don't encode - axios handles it correctly
-      // For external URLs, use requote_uri encoding
+      // For local MinIO URLs, use simple encodeURI (handles spaces without double-encoding)
+      // For external URLs, use requote_uri encoding (handles already-encoded URLs)
       const isLocalMinIO = url.includes('minio:') || url.includes('localhost:9000');
-      const finalUrl = isLocalMinIO ? url : this.requoteUri(url);
+      const finalUrl = isLocalMinIO ? encodeURI(url) : this.requoteUri(url);
 
       logger.info('[LocalAudioProcessor] Downloading audio', {
         originalUrl: url,
