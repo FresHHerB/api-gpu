@@ -346,24 +346,40 @@ def download_google_drive_file(url: str, output_path: Path) -> None:
         if 'text/html' in content_type:
             logger.info("📋 Large file detected - handling virus scan confirmation...")
 
-            # Look for download_warning cookie
-            token = None
-            for key, value in response.cookies.items():
-                if key.startswith('download_warning'):
-                    token = value
-                    break
+            # Extract UUID from HTML (new Google Drive method)
+            # HTML contains: <input type="hidden" name="uuid" value="xxxxx-xxxxx-xxxxx-xxxxx-xxxxx">
+            html_content = response.text
 
-            if token:
-                # Retry with confirmation token
-                confirm_url = url + f"&confirm={token}"
-                logger.info(f"🔄 Retrying with confirmation token...")
+            import re
+            uuid_match = re.search(r'name="uuid"\s+value="([a-f0-9\-]+)"', html_content)
+            file_id_match = re.search(r'name="id"\s+value="([a-zA-Z0-9_\-]+)"', html_content)
+
+            if uuid_match and file_id_match:
+                uuid = uuid_match.group(1)
+                file_id = file_id_match.group(1)
+
+                # Build new URL with drive.usercontent.google.com
+                confirm_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t&uuid={uuid}"
+                logger.info(f"🔄 Retrying with UUID: {uuid[:8]}...")
+
                 response = session.get(confirm_url, stream=True, timeout=300, allow_redirects=True)
                 response.raise_for_status()
             else:
-                # Try alternative method: extract confirm code from HTML
-                logger.warning("⚠️ No download_warning cookie found, trying alternative method...")
-                # For very large files, Google Drive might use a different confirmation mechanism
-                # We'll proceed anyway and hope it works
+                # Fallback: try old method with download_warning cookie
+                logger.warning("⚠️ Could not extract UUID from HTML, trying old cookie method...")
+                token = None
+                for key, value in response.cookies.items():
+                    if key.startswith('download_warning'):
+                        token = value
+                        break
+
+                if token:
+                    confirm_url = url + f"&confirm={token}"
+                    logger.info(f"🔄 Retrying with cookie token...")
+                    response = session.get(confirm_url, stream=True, timeout=300, allow_redirects=True)
+                    response.raise_for_status()
+                else:
+                    raise ValueError("Could not extract confirmation token from Google Drive. File may be private or restricted.")
 
         # Download file in chunks
         total_size = 0
