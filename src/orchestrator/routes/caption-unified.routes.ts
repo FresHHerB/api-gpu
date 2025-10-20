@@ -124,7 +124,7 @@ const unifiedCaptionSchema = Joi.object({
       fundo_opacidade: Joi.number().min(0).max(100).default(50),
       fundo_arredondado: Joi.boolean().default(true),
       texto_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#FFFFFF'),
-      highlight_texto_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#FFFF00'),
+      highlight_texto_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).optional(),
       highlight_cor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).default('#D60000'),
       highlight_borda: Joi.number().min(1).max(50).default(12),
       padding_horizontal: Joi.number().min(0).max(500).default(40),
@@ -221,7 +221,8 @@ router.post('/runpod/video/caption_style', authenticateApiKey, async (req: Reque
       // Convert hex colors to RGB
       const fundoRgb = hexToRgb(style.fundo_cor);
       const textoRgb = hexToRgb(style.texto_cor);
-      const highlightTextoRgb = hexToRgb(style.highlight_texto_cor);
+      // If highlight_texto_cor not provided, use texto_cor (same color as normal text)
+      const highlightTextoRgb = hexToRgb(style.highlight_texto_cor || style.texto_cor);
       const highlightRgb = hexToRgb(style.highlight_cor);
 
       // Convert opacity from 0-100% to 0-255
