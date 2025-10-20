@@ -22,7 +22,9 @@ const concatenateAudioSchema = Joi.object({
   audio_urls: Joi.array()
     .items(
       Joi.object({
-        audio_url: Joi.string().required()
+        audio_url: Joi.string().pattern(/^https?:\/\/.+/).required().messages({
+          'string.pattern.base': 'audio_url must be a valid HTTP/HTTPS URL'
+        })
       })
     )
     .min(2)

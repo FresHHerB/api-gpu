@@ -70,17 +70,20 @@ export class LocalAudioProcessor {
    */
   private async downloadFile(url: string, dest: string): Promise<void> {
     try {
-      // Encode URL using same strategy as Python's requests.utils.requote_uri
-      const encodedUrl = this.requoteUri(url);
+      // For local MinIO URLs, don't encode - axios handles it correctly
+      // For external URLs, use requote_uri encoding
+      const isLocalMinIO = url.includes('minio:') || url.includes('localhost:9000');
+      const finalUrl = isLocalMinIO ? url : this.requoteUri(url);
 
       logger.info('[LocalAudioProcessor] Downloading audio', {
         originalUrl: url,
-        encodedUrl,
+        finalUrl,
+        isLocalMinIO,
         dest
       });
 
       const response = await axios({
-        url: encodedUrl,
+        url: finalUrl,
         method: 'GET',
         responseType: 'stream',
         timeout: 300000, // 5 minutes
@@ -91,7 +94,8 @@ export class LocalAudioProcessor {
       logger.info('[LocalAudioProcessor] Download response received', {
         status: response.status,
         contentLength: response.headers['content-length'],
-        contentType: response.headers['content-type']
+        contentType: response.headers['content-type'],
+        url: finalUrl
       });
 
       const writer = require('fs').createWriteStream(dest);
