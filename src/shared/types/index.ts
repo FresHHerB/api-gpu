@@ -67,12 +67,18 @@ export interface ConcatenateRequest {
 }
 
 export interface ConcatVideoAudioRequest {
-  videos_base64: string[]; // Array of base64-encoded videos (will be repeated cyclically)
+  video_urls: string[]; // Array of video URLs (Google Drive, S3, HTTP - will be repeated cyclically)
   audio_url: string; // URL of MP3 audio file
   path: string; // S3 path including /videos/ (e.g., "Channel Name/Video Title/videos/")
   output_filename: string; // Output filename (e.g., "video_final.mp4")
   normalize?: boolean; // Normalize videos to same spec (enables -c copy, default: true)
   // bucket is read from S3_BUCKET_NAME env var
+  // Supported video URL formats:
+  // - Google Drive: https://drive.google.com/file/d/FILE_ID/view?usp=drive_link
+  // - Google Drive: https://drive.google.com/file/d/FILE_ID
+  // - Google Drive: https://drive.google.com/file/d/FILE_ID/edit
+  // - S3/MinIO: https://minio.example.com/bucket/path/video.mp4
+  // - HTTP/HTTPS: https://example.com/video.mp4
 }
 
 // ============================================

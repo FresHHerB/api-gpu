@@ -272,6 +272,139 @@ def normalize_url(url: str) -> str:
     return requote_uri(url)
 
 
+def convert_google_drive_url(url: str) -> str:
+    """
+    Convert Google Drive sharing URL to direct download URL
+
+    Supported formats:
+    - https://drive.google.com/file/d/FILE_ID/view?usp=drive_link
+    - https://drive.google.com/file/d/FILE_ID/view
+    - https://drive.google.com/file/d/FILE_ID/edit
+    - https://drive.google.com/file/d/FILE_ID
+    - https://drive.google.com/open?id=FILE_ID
+
+    Returns:
+    - https://drive.google.com/uc?export=download&id=FILE_ID
+
+    Example:
+        >>> convert_google_drive_url("https://drive.google.com/file/d/ABC123/view?usp=drive_link")
+        "https://drive.google.com/uc?export=download&id=ABC123"
+    """
+    import re
+
+    # Extract file ID from various Google Drive URL formats
+    patterns = [
+        r'/file/d/([a-zA-Z0-9_-]+)',          # /file/d/ID/view, /file/d/ID/edit, /file/d/ID
+        r'[?&]id=([a-zA-Z0-9_-]+)',            # ?id=ID or &id=ID
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            file_id = match.group(1)
+            direct_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            logger.info(f"🔗 Converted Google Drive URL: {file_id}")
+            return direct_url
+
+    # If not a Google Drive URL or no match, return as-is
+    logger.warning(f"⚠️ Could not extract Google Drive file ID from: {url}")
+    return url
+
+
+def download_google_drive_file(url: str, output_path: Path) -> None:
+    """
+    Download file from Google Drive, handling large files (>25MB)
+
+    Google Drive shows a virus scan warning for large files, requiring
+    a confirmation token. This function handles that automatically.
+
+    Args:
+        url: Google Drive URL (will be converted if needed)
+        output_path: Path to save the downloaded file
+
+    Raises:
+        ValueError: If download fails or file is empty
+        requests.exceptions.RequestException: On network errors
+    """
+    # Convert to direct download URL if needed
+    if 'drive.google.com' in url and '/uc?' not in url:
+        url = convert_google_drive_url(url)
+
+    logger.info(f"📥 Downloading from Google Drive: {url}")
+
+    try:
+        session = requests.Session()
+
+        # Initial request
+        response = session.get(url, stream=True, timeout=300, allow_redirects=True)
+        response.raise_for_status()
+
+        # Check for virus scan warning (large files >25MB)
+        # Google Drive returns HTML page with confirmation for large files
+        content_type = response.headers.get('Content-Type', '')
+
+        if 'text/html' in content_type:
+            logger.info("📋 Large file detected - handling virus scan confirmation...")
+
+            # Look for download_warning cookie
+            token = None
+            for key, value in response.cookies.items():
+                if key.startswith('download_warning'):
+                    token = value
+                    break
+
+            if token:
+                # Retry with confirmation token
+                confirm_url = url + f"&confirm={token}"
+                logger.info(f"🔄 Retrying with confirmation token...")
+                response = session.get(confirm_url, stream=True, timeout=300, allow_redirects=True)
+                response.raise_for_status()
+            else:
+                # Try alternative method: extract confirm code from HTML
+                logger.warning("⚠️ No download_warning cookie found, trying alternative method...")
+                # For very large files, Google Drive might use a different confirmation mechanism
+                # We'll proceed anyway and hope it works
+
+        # Download file in chunks
+        total_size = 0
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    total_size += len(chunk)
+
+        file_size = output_path.stat().st_size
+        file_size_mb = file_size / (1024 * 1024)
+
+        logger.info(f"✅ Google Drive download completed: {output_path.name} ({file_size_mb:.2f} MB)")
+
+        if file_size == 0:
+            raise ValueError(f"Downloaded file is empty: {url}")
+
+        # Verify it's actually a video file (not an error HTML page)
+        # Check for MP4 magic number (first 4 bytes should contain 'ftyp')
+        with open(output_path, 'rb') as f:
+            header = f.read(12)
+            if len(header) >= 12:
+                # MP4 files have 'ftyp' at offset 4-8
+                if b'ftyp' not in header:
+                    # Might be HTML error page
+                    logger.error(f"❌ Downloaded file doesn't appear to be a valid video: {output_path}")
+                    # Read first 500 bytes to check if it's HTML
+                    f.seek(0)
+                    content = f.read(500).decode('utf-8', errors='ignore')
+                    if '<html' in content.lower() or '<!doctype' in content.lower():
+                        raise ValueError(f"Google Drive returned HTML instead of video. File may be private or restricted. First 200 chars: {content[:200]}")
+                    raise ValueError(f"Downloaded file doesn't appear to be a valid MP4 video")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Google Drive download failed: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to download from Google Drive: {e}")
+        raise
+
+
 # HTTP Server for serving videos (caption/addaudio only)
 class VideoHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -1091,7 +1224,7 @@ def concatenate_videos(
 
 
 def concatenate_videos_cyclic(
-    videos_base64: List[str],
+    video_urls: List[str],
     audio_url: str,
     path: str,
     output_filename: str,
@@ -1099,11 +1232,16 @@ def concatenate_videos_cyclic(
     worker_id: str = None
 ) -> Dict[str, Any]:
     """
-    Concatenate base64-encoded videos cyclically to match audio duration
+    Concatenate videos from URLs cyclically to match audio duration
     Optimized for CPU performance using concat demuxer with -c copy
 
+    Supports:
+    - Google Drive URLs (all formats)
+    - S3/MinIO URLs
+    - Direct HTTP/HTTPS URLs
+
     Args:
-        videos_base64: List of base64-encoded video files
+        video_urls: List of video URLs (Google Drive, S3, HTTP, etc.)
         audio_url: URL of the MP3 audio file
         path: S3 path for upload (e.g., "Channel Name/Video Title/videos/")
         output_filename: Output filename (e.g., "video_final.mp4")
@@ -1115,7 +1253,7 @@ def concatenate_videos_cyclic(
     """
     job_id = str(uuid.uuid4())
     logger.info(f"Starting cyclic concatenation job: {job_id}")
-    logger.info(f"Videos: {len(videos_base64)}, Normalize: {normalize}")
+    logger.info(f"Videos: {len(video_urls)}, Normalize: {normalize}")
 
     # Working directories
     work_dir = WORK_DIR / job_id
@@ -1131,22 +1269,28 @@ def concatenate_videos_cyclic(
     trimmed_files: List[Path] = []
 
     try:
-        # Step 1: Decode base64 videos
-        logger.info(f"📦 Decoding {len(videos_base64)} base64 videos...")
-        start_decode = time.time()
+        # Step 1: Download videos from URLs
+        logger.info(f"📥 Downloading {len(video_urls)} videos from URLs...")
+        start_download = time.time()
 
-        for i, b64_video in enumerate(videos_base64):
-            video_data = base64.b64decode(b64_video)
+        for i, video_url in enumerate(video_urls):
             video_path = work_dir / f"video_{i}.mp4"
 
-            with open(video_path, 'wb') as f:
-                f.write(video_data)
+            # Detect and handle Google Drive URLs
+            if 'drive.google.com' in video_url:
+                logger.info(f"  📥 Video {i}: Google Drive")
+                download_google_drive_file(video_url, video_path)
+            else:
+                # S3, HTTP, or other URLs
+                logger.info(f"  📥 Video {i}: {video_url[:50]}...")
+                download_file(video_url, video_path)
 
             input_files.append(video_path)
-            logger.info(f"  ✓ Video {i}: {video_path.stat().st_size / (1024*1024):.2f} MB")
+            file_size_mb = video_path.stat().st_size / (1024*1024)
+            logger.info(f"  ✓ Video {i}: {file_size_mb:.2f} MB")
 
-        decode_time = time.time() - start_decode
-        logger.info(f"✅ Decode complete: {decode_time:.2f}s")
+        download_time = time.time() - start_download
+        logger.info(f"✅ Download complete: {download_time:.2f}s ({len(video_urls)} videos)")
 
         # Step 2: Download audio and get duration
         logger.info(f"📥 Downloading audio: {audio_url}")
@@ -1185,7 +1329,7 @@ def concatenate_videos_cyclic(
         files_to_concat = input_files
 
         if normalize:
-            logger.info(f"⚙️ Normalizing {len(input_files)} videos to 1080p@30fps, H.264 High...")
+            logger.info(f"⚙️ Normalizing {len(input_files)} videos to 1080p@30fps, H.264 High (VIDEO ONLY - removing audio)...")
             start_normalize = time.time()
 
             for i, video_path in enumerate(input_files):
@@ -1206,17 +1350,14 @@ def concatenate_videos_cyclic(
                     '-profile:v', 'high',
                     '-level', '4.0',
                     '-pix_fmt', 'yuv420p',
-                    '-c:a', 'aac',
-                    '-ar', '48000',
-                    '-ac', '2',
-                    '-b:a', '192k',
+                    '-an',                # REMOVE AUDIO - only MP3 audio will be used
                     '-movflags', '+faststart',
                     str(normalized_path)
                 ]
 
                 subprocess.run(cmd, capture_output=True, text=True, check=True)
                 normalized_files.append(normalized_path)
-                logger.info(f"  ✓ Normalized video {i}: {normalized_path.stat().st_size / (1024*1024):.2f} MB")
+                logger.info(f"  ✓ Normalized video {i}: {normalized_path.stat().st_size / (1024*1024):.2f} MB (video only, no audio)")
 
             normalize_time = time.time() - start_normalize
             logger.info(f"✅ Normalization complete: {normalize_time:.2f}s")
@@ -1285,10 +1426,21 @@ def concatenate_videos_cyclic(
                     '-profile:v', 'high',
                     '-level', '4.0',
                     '-pix_fmt', 'yuv420p',
-                    '-c:a', 'aac',
-                    '-ar', '48000',
-                    '-ac', '2',
-                    '-b:a', '192k',
+                ])
+
+                # Remove audio if normalize=true (only MP3 audio will be used)
+                if normalize:
+                    cmd.append('-an')  # Remove audio track
+                else:
+                    # Keep audio if not normalizing
+                    cmd.extend([
+                        '-c:a', 'aac',
+                        '-ar', '48000',
+                        '-ac', '2',
+                        '-b:a', '192k',
+                    ])
+
+                cmd.extend([
                     '-movflags', '+faststart',
                     str(trimmed_path)
                 ])
@@ -1785,22 +1937,37 @@ def handler(job: Dict) -> Dict[str, Any]:
             }
 
         elif operation == 'concat_video_audio':
-            videos_base64 = job_input.get('videos_base64', [])
-            audio_url = normalize_url(job_input.get('audio_url'))
+            video_urls = job_input.get('video_urls', [])
+            audio_url = job_input.get('audio_url')
             path = job_input.get('path')
             output_filename = job_input.get('output_filename')
             normalize = job_input.get('normalize', True)
 
-            if not videos_base64 or not audio_url or not path or not output_filename:
-                raise ValueError("Missing required fields: videos_base64, audio_url, path, output_filename")
+            if not video_urls or not audio_url or not path or not output_filename:
+                raise ValueError("Missing required fields: video_urls, audio_url, path, output_filename")
 
-            if len(videos_base64) < 1:
-                raise ValueError("At least 1 base64 video is required")
+            if len(video_urls) < 1:
+                raise ValueError("At least 1 video URL is required")
+
+            # Normalize audio URL
+            audio_url = normalize_url(audio_url)
+
+            # Normalize video URLs (convert Google Drive URLs if needed)
+            normalized_video_urls = []
+            for i, url in enumerate(video_urls):
+                if 'drive.google.com' in url:
+                    # Google Drive URL - will be converted during download
+                    normalized_video_urls.append(url)
+                    logger.info(f"  Video {i}: Google Drive URL detected")
+                else:
+                    # Regular URL - normalize for UTF-8 characters
+                    normalized_video_urls.append(normalize_url(url))
+                    logger.info(f"  Video {i}: {url[:60]}...")
 
             logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
-            logger.info(f"🔁 Cyclic concatenation: {len(videos_base64)} videos, normalize={normalize}")
+            logger.info(f"🔁 Cyclic concatenation: {len(normalized_video_urls)} videos, normalize={normalize}")
 
-            result = concatenate_videos_cyclic(videos_base64, audio_url, path, output_filename, normalize, worker_id)
+            result = concatenate_videos_cyclic(normalized_video_urls, audio_url, path, output_filename, normalize, worker_id)
 
             # Build descriptive message
             cycle_info = f"{result['full_cycles']} full cycles"

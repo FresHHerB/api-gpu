@@ -245,7 +245,7 @@ router.post(
       const pathRaiz = extractPathRaiz(data.path);
 
       logger.info('🔁 ConcatVideoAudio request received', {
-        videoCount: data.videos_base64.length,
+        videoCount: data.video_urls.length,
         idRoteiro: id_roteiro,
         webhookUrl: webhook_url,
         path: data.path,
@@ -261,7 +261,7 @@ router.post(
       logger.info('✅ ConcatVideoAudio job created', {
         jobId: job.jobId,
         status: job.status,
-        videoCount: data.videos_base64.length,
+        videoCount: data.video_urls.length,
         pathRaiz: pathRaiz
       });
 
