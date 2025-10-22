@@ -36,7 +36,7 @@ AutoDark API GPU is a production-ready, scalable video processing platform that 
 
 | Document | Description |
 |----------|-------------|
-| **[API Reference](docs/API_REFERENCE.md)** | Complete endpoint documentation with examples |
+| **[API Reference](docs/API.md)** | Complete endpoint documentation with examples and TypeScript types |
 | **[Architecture Guide](docs/ARCHITECTURE.md)** | System design, data flows, and technical decisions |
 | **[Deployment Guide](docs/DEPLOYMENT.md)** | Production deployment instructions |
 | **[Transcription Details](docs/TRANSCRIPTION.md)** | Whisper model selection and output formats |
@@ -310,7 +310,7 @@ curl -X POST https://api.your-domain.com/runpod/video/caption_style \
 - `zoomout` - Pull-back effect (1.2x → 0.8x scale)
 - `zoompanright` - Dynamic right pan with zoom (0.9x → 1.1x + horizontal movement)
 
-See [API Reference](docs/API_REFERENCE.md) for complete parameter documentation.
+See [API Reference](docs/API.md) for complete parameter documentation.
 
 ---
 
@@ -632,7 +632,7 @@ npm run lint:fix             # Auto-fix issues
 | `/runpod/audio/transcribe/health` | GET | - | Transcription health |
 | `/vps/audio/health` | GET | - | Audio processor health |
 
-See [API Reference](docs/API_REFERENCE.md) for complete documentation.
+See [API Reference](docs/API.md) for complete documentation.
 
 ---
 
