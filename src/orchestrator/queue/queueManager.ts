@@ -17,11 +17,16 @@ export class QueueManager {
   private workerWaitCount: number = 0; // Track consecutive "not enough workers" occurrences
   private lastWorkerWaitJob: string = ''; // Last job that waited for workers
   private lastWorkerWaitLog: number = 0; // Timestamp of last "not enough workers" log
+  private maxWorkers: number; // Maximum workers available in RunPod endpoint
 
   constructor(storage: JobStorage, runpodService: RunPodService) {
     this.storage = storage;
     this.runpodService = runpodService;
-    logger.info('🎯 QueueManager initialized');
+    this.maxWorkers = parseInt(process.env.MAX_WORKERS || '3', 10);
+
+    logger.info('🎯 QueueManager initialized', {
+      maxWorkers: this.maxWorkers
+    });
   }
 
   /**
@@ -260,19 +265,37 @@ export class QueueManager {
 
   /**
    * Calcula quantos workers são necessários para um job
+   * GARANTE que NUNCA ultrapasse maxWorkers (RunPod endpoint limit)
    */
   private calculateWorkersNeeded(job: Job): number {
+    let workersNeeded = 1; // Default: 1 worker
+
     if (job.operation === 'img2vid') {
       const imageCount = job.payload.images?.length || 0;
 
-      // Usar múltiplos workers para batches grandes
+      // Calcular workers ideais baseado no batch size (34 images/worker)
       if (imageCount > 50) {
-        return Math.min(3, Math.ceil(imageCount / 34));
+        const idealWorkers = Math.ceil(imageCount / 34);
+
+        // CRITICAL: SEMPRE limitar ao máximo disponível
+        workersNeeded = Math.min(this.maxWorkers, idealWorkers);
+
+        // Log warning se job for maior que capacidade máxima
+        if (idealWorkers > this.maxWorkers) {
+          logger.warn('⚠️ Large job will be capped at max workers', {
+            jobId: job.jobId,
+            imageCount,
+            idealWorkers,
+            cappedWorkers: workersNeeded,
+            maxWorkers: this.maxWorkers,
+            message: `Job with ${imageCount} images ideally needs ${idealWorkers} workers, but will use ${workersNeeded} (max available)`
+          });
+        }
       }
     }
 
-    // Operações padrão (caption, addaudio) usam 1 worker
-    return 1;
+    // Operações padrão (caption, addaudio, concatenate) usam 1 worker
+    return workersNeeded;
   }
 
   /**
