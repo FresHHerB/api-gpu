@@ -709,7 +709,7 @@ MIT License - see [LICENSE](LICENSE) file for details
 ## Support
 
 For support, please:
-1. Check [API Reference](docs/API_REFERENCE.md) and [Deployment Guide](docs/DEPLOYMENT.md)
+1. Check [API Reference](docs/API.md) and [Deployment Guide](docs/DEPLOYMENT.md)
 2. Review [Troubleshooting](#troubleshooting) section
 3. Search [existing issues](https://github.com/your-org/api-gpu/issues)
 4. Open a new issue with:
