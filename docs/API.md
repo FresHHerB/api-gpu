@@ -553,14 +553,24 @@ Transcribe audio to text using Faster Whisper (GPU-accelerated) with automatic s
 
 **Whisper Models:**
 
-| Model | Speed | Quality | RAM | Best For |
-|-------|-------|---------|-----|----------|
-| `tiny` | ⚡⚡⚡⚡⚡ | ⭐⭐ | 1GB | Quick drafts, testing |
-| `base` | ⚡⚡⚡⚡ | ⭐⭐⭐ | 1GB | Fast transcription |
-| `small` | ⚡⚡⚡ | ⭐⭐⭐⭐ | 2GB | Balanced speed/quality |
-| `medium` | ⚡⚡ | ⭐⭐⭐⭐⭐ | 5GB | High quality |
-| `large-v3` | ⚡ | ⭐⭐⭐⭐⭐ | 10GB | **Best accuracy (recommended)** |
-| `turbo` | ⚡⚡⚡⚡ | ⭐⭐⭐⭐⭐ | 6GB | Fastest high-quality |
+| Model | Parameters | Speed | Quality | VRAM | Best For |
+|-------|-----------|-------|---------|------|----------|
+| `tiny` | 39M | ⚡⚡⚡⚡⚡ ~10x | ⭐⭐ | 1GB | Quick drafts, testing |
+| `base` | 74M | ⚡⚡⚡⚡ ~7x | ⭐⭐⭐ | 1GB | Fast transcription |
+| `small` | 244M | ⚡⚡⚡ ~4x | ⭐⭐⭐⭐ | 2GB | Balanced speed/quality |
+| `medium` | 769M | ⚡⚡ ~2x | ⭐⭐⭐⭐⭐ | 5GB | High quality |
+| `large-v3` | 1550M | ⚡ 1x | ⭐⭐⭐⭐⭐ | 10GB | **Best accuracy + translation** |
+| `turbo` | 809M | ⚡⚡⚡⚡⚡ ~8x | ⭐⭐⭐⭐⭐ | 6GB | **Speed + quality sweet spot** ⚠️ |
+
+**Speed reference:** All speeds relative to `large` (1x baseline)
+
+**⚠️ Turbo Limitation:** Cannot perform translation tasks (non-English speech → English text). For translation, use `large-v3`.
+
+**Recommendations:**
+- **Multilingual + Translation needed:** `large-v3` (supports all languages + translation)
+- **Transcription only (any language):** `turbo` (8x faster, minimal quality loss)
+- **Real-time/Low-latency:** `base` or `small` (sub-second processing)
+- **Development/Testing:** `small` (good balance)
 
 **Response (200 OK):**
 ```json

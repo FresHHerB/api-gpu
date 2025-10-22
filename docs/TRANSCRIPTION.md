@@ -296,17 +296,25 @@ curl -X POST http://localhost:3000/video/caption \
 
 ## Model Comparison
 
-| Model | Speed | Quality | RAM | Best For |
-|-------|-------|---------|-----|----------|
-| `tiny` | ⚡⚡⚡⚡⚡ | ⭐⭐ | 1GB | Quick drafts, testing |
-| `base` | ⚡⚡⚡⚡ | ⭐⭐⭐ | 1GB | Fast transcription |
-| `small` | ⚡⚡⚡ | ⭐⭐⭐⭐ | 2GB | Balanced speed/quality |
-| `medium` | ⚡⚡ | ⭐⭐⭐⭐⭐ | 5GB | High quality |
-| `large-v1/v2` | ⚡ | ⭐⭐⭐⭐⭐ | 10GB | Best quality |
-| `large-v3` | ⚡ | ⭐⭐⭐⭐⭐ | 10GB | Latest, best accuracy |
-| `turbo` | ⚡⚡⚡⚡ | ⭐⭐⭐⭐⭐ | 6GB | Fastest high-quality |
+| Model | Parameters | Speed | Quality | VRAM | Best For |
+|-------|-----------|-------|---------|------|----------|
+| `tiny` | 39M | ⚡⚡⚡⚡⚡ ~10x | ⭐⭐ | 1GB | Quick drafts, testing |
+| `base` | 74M | ⚡⚡⚡⚡ ~7x | ⭐⭐⭐ | 1GB | Fast transcription |
+| `small` | 244M | ⚡⚡⚡ ~4x | ⭐⭐⭐⭐ | 2GB | Balanced speed/quality |
+| `medium` | 769M | ⚡⚡ ~2x | ⭐⭐⭐⭐⭐ | 5GB | High quality |
+| `large-v2` | 1550M | ⚡ 1x | ⭐⭐⭐⭐⭐ | 10GB | Maximum quality (v2) |
+| `large-v3` | 1550M | ⚡ 1x | ⭐⭐⭐⭐⭐ | 10GB | **Latest, best accuracy** |
+| `turbo` | 809M | ⚡⚡⚡⚡⚡ ~8x | ⭐⭐⭐⭐⭐ | 6GB | **Speed + quality sweet spot** ⚠️ |
 
-**Recommendation:** Use `large-v3` for production, `turbo` for speed-sensitive applications.
+**Speed reference:** All speeds relative to `large` (1x baseline)
+
+**⚠️ Turbo Limitation:** Cannot perform translation tasks (non-English → English). Use `large-v3` if translation is required.
+
+**Recommendations:**
+- **Production (multilingual + translation):** `large-v3` - Best accuracy, supports translation
+- **Production (transcription only):** `turbo` - 8x faster with minimal quality loss
+- **Development/Testing:** `small` - Good balance for quick iterations
+- **Real-time applications:** `base` or `tiny` - Lowest latency
 
 ---
 
