@@ -32,7 +32,7 @@ AutoDark API GPU is a production-ready, scalable video processing platform that 
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -43,7 +43,7 @@ AutoDark API GPU is a production-ready, scalable video processing platform that 
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -314,7 +314,7 @@ See [API Reference](docs/API_REFERENCE.md) for complete parameter documentation.
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -401,7 +401,7 @@ See [Architecture Guide](docs/ARCHITECTURE.md) for detailed technical design.
 
 ---
 
-## 🔧 Technology Stack
+## Technology Stack
 
 ### Orchestrator (Node.js/TypeScript)
 - **Runtime**: Node.js 20 LTS
@@ -565,7 +565,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for complete instructions.
 
 ---
 
-## 🛠️ Development
+## Development
 
 ### Setup
 ```bash
@@ -706,7 +706,7 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 ---
 
-## 📧 Support
+## Support
 
 For support, please:
 1. Check [API Reference](docs/API_REFERENCE.md) and [Deployment Guide](docs/DEPLOYMENT.md)
@@ -720,4 +720,4 @@ For support, please:
 
 ---
 
-**Built with ❤️ for scalable video processing**
+© 2025 AutoDark API GPU. MIT License.

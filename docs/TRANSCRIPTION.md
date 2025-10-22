@@ -238,7 +238,7 @@ POLLING_MAX_ATTEMPTS=240
 ```bash
 curl -X POST http://localhost:3000/transcribe \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: coringao" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
     "audio_url": "https://example.com/audio.mp3",
     "path": "transcriptions/video-123/"
@@ -250,7 +250,7 @@ curl -X POST http://localhost:3000/transcribe \
 ```bash
 curl -X POST http://localhost:3000/transcribe \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: coringao" \
+  -H "X-API-Key: your-api-key-here" \
   -d '{
     "audio_url": "https://example.com/audio.mp3",
     "path": "transcriptions/video-123/",

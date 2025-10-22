@@ -62,3 +62,9 @@ coverage/
 
 # MCP configuration (contains secrets)
 .mcp.json
+
+# Test and results files (may contain sensitive data)
+TESTE-*.md
+TEST-*.md
+*-RESULTS.md
+test_*.py
