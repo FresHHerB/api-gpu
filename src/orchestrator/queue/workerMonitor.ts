@@ -18,9 +18,11 @@ export class WorkerMonitor {
 
   private pollingInterval: number; // Intervalo de polling em ms
   private timeoutCheckInterval: number; // Intervalo de checagem de timeout em ms
+  private validationInterval: number; // Intervalo de validação de workers em ms
   private isRunning: boolean = false;
   private pollingTimer?: NodeJS.Timeout;
   private timeoutTimer?: NodeJS.Timeout;
+  private validationTimer?: NodeJS.Timeout;
 
   constructor(
     storage: JobStorage,
@@ -28,7 +30,8 @@ export class WorkerMonitor {
     queueManager: QueueManager,
     webhookService: WebhookService,
     pollingInterval: number = 5000, // 5s
-    timeoutCheckInterval: number = 60000 // 60s
+    timeoutCheckInterval: number = 60000, // 60s
+    validationInterval: number = 300000 // 5min
   ) {
     this.storage = storage;
     this.runpodService = runpodService;
@@ -36,10 +39,12 @@ export class WorkerMonitor {
     this.webhookService = webhookService;
     this.pollingInterval = pollingInterval;
     this.timeoutCheckInterval = timeoutCheckInterval;
+    this.validationInterval = validationInterval;
 
     logger.info('👁️ WorkerMonitor initialized', {
       pollingInterval: `${pollingInterval}ms`,
-      timeoutCheckInterval: `${timeoutCheckInterval}ms`
+      timeoutCheckInterval: `${timeoutCheckInterval}ms`,
+      validationInterval: `${validationInterval}ms`
     });
   }
 
@@ -60,6 +65,9 @@ export class WorkerMonitor {
 
     // Loop 2: Verificação de timeouts
     this.scheduleTimeoutCheck();
+
+    // Loop 3: Validação periódica de worker count
+    this.scheduleValidation();
   }
 
   /**
@@ -76,6 +84,11 @@ export class WorkerMonitor {
     if (this.timeoutTimer) {
       clearTimeout(this.timeoutTimer);
       this.timeoutTimer = undefined;
+    }
+
+    if (this.validationTimer) {
+      clearTimeout(this.validationTimer);
+      this.validationTimer = undefined;
     }
 
     logger.info('🛑 WorkerMonitor stopped');
@@ -103,6 +116,18 @@ export class WorkerMonitor {
       await this.checkTimeouts();
       this.scheduleTimeoutCheck();
     }, this.timeoutCheckInterval);
+  }
+
+  /**
+   * Agenda próxima validação de worker count
+   */
+  private scheduleValidation(): void {
+    if (!this.isRunning) return;
+
+    this.validationTimer = setTimeout(async () => {
+      await this.validateWorkerCount();
+      this.scheduleValidation();
+    }, this.validationInterval);
   }
 
   /**
@@ -220,7 +245,17 @@ export class WorkerMonitor {
       durationSeconds: parseFloat((durationMs / 1000).toFixed(2))
     };
 
-    // Atualizar job
+    // CRITICAL: Ordem correta para prevenir leaks em caso de crash
+    // 1. Liberar workers PRIMEIRO (incrementa semaphore)
+    logger.info('🔓 Releasing workers before updating job', {
+      jobId: job.jobId,
+      workersToRelease: job.workersReserved
+    });
+    await this.queueManager.releaseWorker(job.workersReserved);
+
+    // 2. Zerar workersReserved DEPOIS (marca job como finalizado)
+    // Se crash ocorrer antes deste ponto, recoverWorkers() detectará
+    // e auto-corrigirá (validação de count em recoverWorkers())
     await this.storage.updateJob(job.jobId, {
       status: 'COMPLETED',
       result: { ...result, execution },
@@ -228,7 +263,12 @@ export class WorkerMonitor {
       workersReserved: 0 // CRITICAL: Zero out workers to prevent leaks
     });
 
-    // Enviar webhook
+    logger.info('✅ Job finalized and workers released', {
+      jobId: job.jobId,
+      workersReleased: job.workersReserved
+    });
+
+    // 3. Enviar webhook (não afeta workers)
     await this.webhookService.sendWebhook(job.jobId, job.webhookUrl, {
       jobId: job.jobId,
       idRoteiro: job.idRoteiro,
@@ -239,9 +279,6 @@ export class WorkerMonitor {
       result,
       execution
     } as any);
-
-    // Liberar workers
-    await this.queueManager.releaseWorker(job.workersReserved);
   }
 
   /**
@@ -269,7 +306,15 @@ export class WorkerMonitor {
       codec: 'h264_nvenc'
     };
 
-    // Atualizar job
+    // CRITICAL: Ordem correta para prevenir leaks em caso de crash
+    // 1. Liberar workers PRIMEIRO (incrementa semaphore)
+    logger.info('🔓 Releasing workers before marking job as failed', {
+      jobId: job.jobId,
+      workersToRelease: job.workersReserved
+    });
+    await this.queueManager.releaseWorker(job.workersReserved);
+
+    // 2. Zerar workersReserved DEPOIS (marca job como finalizado)
     await this.storage.updateJob(job.jobId, {
       status: 'FAILED',
       error: errorMessage,
@@ -277,7 +322,12 @@ export class WorkerMonitor {
       workersReserved: 0 // CRITICAL: Zero out workers to prevent leaks
     });
 
-    // Enviar webhook com erro
+    logger.info('✅ Failed job finalized and workers released', {
+      jobId: job.jobId,
+      workersReleased: job.workersReserved
+    });
+
+    // 3. Enviar webhook com erro (não afeta workers)
     await this.webhookService.sendWebhook(job.jobId, job.webhookUrl, {
       jobId: job.jobId,
       idRoteiro: job.idRoteiro,
@@ -290,9 +340,6 @@ export class WorkerMonitor {
       },
       execution
     } as any);
-
-    // Liberar workers
-    await this.queueManager.releaseWorker(job.workersReserved);
   }
 
   /**
@@ -394,6 +441,33 @@ export class WorkerMonitor {
     };
 
     return timeouts[operation] || 30 * 60 * 1000; // Default: 30 min
+  }
+
+  /**
+   * Valida e auto-corrige worker count periodicamente
+   * CRITICAL: Previne worker leaks permanentes
+   */
+  private async validateWorkerCount(): Promise<void> {
+    try {
+      logger.info('🔍 Starting periodic worker count validation');
+
+      // Tentar recuperar workers leaked
+      const recovered = await this.storage.recoverWorkers();
+
+      if (recovered > 0) {
+        logger.warn('⚠️ Periodic validation recovered leaked workers', {
+          recovered,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        logger.debug('✅ Worker count validation passed - no leaks detected');
+      }
+
+    } catch (error) {
+      logger.error('❌ Error during periodic worker validation', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   }
 
   /**

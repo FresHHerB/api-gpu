@@ -8,6 +8,7 @@ import Redis from 'ioredis';
 import { Job, JobStatus, QueueStats } from '../../shared/types';
 import { JobStorage } from './jobStorage';
 import { logger } from '../../shared/utils/logger';
+import { retryWorkerOperation } from '../utils/retryHelper';
 
 export class RedisJobStorage implements JobStorage {
   private redis: Redis;
@@ -163,38 +164,70 @@ export class RedisJobStorage implements JobStorage {
   }
 
   async reserveWorkers(count: number): Promise<boolean> {
-    const available = await this.getAvailableWorkers();
+    // Usar retry para operações críticas de workers
+    return await retryWorkerOperation(
+      async () => {
+        const available = await this.getAvailableWorkers();
 
-    if (available >= count) {
-      await this.redis.decrby('orchestrator:workers:available', count);
-      logger.debug('🔒 Workers reserved in Redis', {
-        reserved: count,
-        available: available - count,
-        total: this.maxWorkers
-      });
-      return true;
-    }
+        if (available < count) {
+          logger.debug('⚠️ Not enough workers available in Redis', {
+            requested: count,
+            available
+          });
+          return false;
+        }
 
-    logger.debug('⚠️ Not enough workers available in Redis', {
-      requested: count,
-      available
-    });
-    return false;
+        // CRITICAL: Operação atômica DECRBY
+        const newValue = await this.redis.decrby('orchestrator:workers:available', count);
+
+        // Validação: rollback se ficou negativo (race condition)
+        if (newValue < 0) {
+          logger.warn('⚠️ Worker reservation caused negative count, rolling back', {
+            count,
+            newValue
+          });
+          await this.redis.incrby('orchestrator:workers:available', count);
+          return false;
+        }
+
+        logger.debug('🔒 Workers reserved in Redis', {
+          reserved: count,
+          available: newValue,
+          total: this.maxWorkers
+        });
+        return true;
+      },
+      'Reserve Workers'
+    );
   }
 
   async releaseWorkers(count: number): Promise<void> {
-    const newValue = await this.redis.incrby('orchestrator:workers:available', count);
-    const capped = Math.min(this.maxWorkers, newValue);
+    // CRITICAL: Usar retry para garantir liberação mesmo com falhas temporárias
+    await retryWorkerOperation(
+      async () => {
+        const newValue = await this.redis.incrby('orchestrator:workers:available', count);
+        const capped = Math.min(this.maxWorkers, newValue);
 
-    if (newValue > this.maxWorkers) {
-      await this.redis.set('orchestrator:workers:available', capped.toString());
-    }
+        // Validação: cap no máximo se excedeu
+        if (newValue > this.maxWorkers) {
+          logger.warn('⚠️ Worker release exceeded max, capping', {
+            newValue,
+            maxWorkers: this.maxWorkers,
+            capped
+          });
+          await this.redis.set('orchestrator:workers:available', capped.toString());
+        }
 
-    logger.debug('🔓 Workers released in Redis', {
-      released: count,
-      available: capped,
-      total: this.maxWorkers
-    });
+        logger.debug('🔓 Workers released in Redis', {
+          released: count,
+          available: capped,
+          total: this.maxWorkers
+        });
+
+        return; // retryWorkerOperation espera Promise<T>
+      },
+      'Release Workers'
+    );
   }
 
   async recoverWorkers(): Promise<number> {
