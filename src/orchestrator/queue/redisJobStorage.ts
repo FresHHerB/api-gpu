@@ -197,6 +197,68 @@ export class RedisJobStorage implements JobStorage {
     });
   }
 
+  async recoverWorkers(): Promise<number> {
+    logger.info('🔧 Starting worker recovery...');
+
+    // Get all jobs
+    const keys = await this.redis.keys('orchestrator:jobs:*');
+    let recoveredWorkers = 0;
+
+    for (const key of keys) {
+      const jobData = await this.redis.hgetall(key);
+      if (Object.keys(jobData).length === 0) continue;
+
+      const job = this.deserializeJob(jobData);
+
+      // Check if job is completed/failed/cancelled but still has workers reserved
+      const isFinished = ['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status);
+      const hasReservedWorkers = job.workersReserved > 0;
+
+      if (isFinished && hasReservedWorkers) {
+        logger.warn('🔄 Recovering workers from finished job', {
+          jobId: job.jobId,
+          status: job.status,
+          workersReserved: job.workersReserved,
+          operation: job.operation
+        });
+
+        // Release the workers
+        await this.releaseWorkers(job.workersReserved);
+        recoveredWorkers += job.workersReserved;
+
+        // Update job to mark workers as released
+        await this.redis.hset(key, 'workersReserved', '0');
+      }
+    }
+
+    // Get current active jobs count
+    const activeJobs = await this.getActiveJobs();
+    const expectedActiveWorkers = activeJobs.reduce((sum, job) => sum + job.workersReserved, 0);
+    const currentAvailable = await this.getAvailableWorkers();
+    const currentActive = this.maxWorkers - currentAvailable;
+
+    logger.info('✅ Worker recovery completed', {
+      recoveredWorkers,
+      expectedActive: expectedActiveWorkers,
+      currentActive,
+      available: currentAvailable,
+      maxWorkers: this.maxWorkers
+    });
+
+    // If there's still a mismatch, reset to correct value
+    if (currentActive !== expectedActiveWorkers) {
+      const correctAvailable = this.maxWorkers - expectedActiveWorkers;
+      logger.warn('⚠️ Worker count mismatch detected, resetting', {
+        expectedActive: expectedActiveWorkers,
+        currentActive,
+        settingAvailable: correctAvailable
+      });
+      await this.redis.set('orchestrator:workers:available', correctAvailable.toString());
+    }
+
+    return recoveredWorkers;
+  }
+
   // ============================================
   // Statistics
   // ============================================

@@ -23,6 +23,7 @@ export interface JobStorage {
   getAvailableWorkers(): Promise<number>;
   reserveWorkers(count: number): Promise<boolean>;
   releaseWorkers(count: number): Promise<void>;
+  recoverWorkers(): Promise<number>; // Recover leaked workers from finished jobs
 
   // Statistics
   getQueueStats(): Promise<QueueStats>;

@@ -152,7 +152,8 @@ export class JobService {
     // Atualizar status
     await this.storage.updateJob(jobId, {
       status: 'CANCELLED',
-      completedAt: new Date()
+      completedAt: new Date(),
+      workersReserved: 0 // CRITICAL: Zero out workers to prevent leaks
     });
 
     logger.info('✅ Job cancelled successfully', { jobId });

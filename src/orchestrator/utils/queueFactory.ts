@@ -44,6 +44,18 @@ export function createQueueSystem(runpodService: RunPodService): QueueSystem {
     logger.info('📦 Using MemoryJobStorage', { maxWorkers });
   }
 
+  // Recover workers from any leaked/orphaned jobs
+  // This runs immediately to fix any worker leaks from previous crashes/failures
+  storage.recoverWorkers().then(recovered => {
+    if (recovered > 0) {
+      logger.warn('⚠️ Recovered leaked workers from previous session', { recovered });
+    }
+  }).catch(error => {
+    logger.error('Failed to recover workers', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  });
+
   // 2. Inicializar QueueManager
   const queueManager = new QueueManager(storage, runpodService);
 

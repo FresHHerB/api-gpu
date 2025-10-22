@@ -224,7 +224,8 @@ export class WorkerMonitor {
     await this.storage.updateJob(job.jobId, {
       status: 'COMPLETED',
       result: { ...result, execution },
-      completedAt: endTime
+      completedAt: endTime,
+      workersReserved: 0 // CRITICAL: Zero out workers to prevent leaks
     });
 
     // Enviar webhook
@@ -272,7 +273,8 @@ export class WorkerMonitor {
     await this.storage.updateJob(job.jobId, {
       status: 'FAILED',
       error: errorMessage,
-      completedAt: endTime
+      completedAt: endTime,
+      workersReserved: 0 // CRITICAL: Zero out workers to prevent leaks
     });
 
     // Enviar webhook com erro

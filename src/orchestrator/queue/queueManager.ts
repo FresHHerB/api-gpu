@@ -247,7 +247,8 @@ export class QueueManager {
       await this.storage.updateJob(job.jobId, {
         status: 'FAILED',
         error: error instanceof Error ? error.message : 'Failed to submit to RunPod',
-        completedAt: new Date()
+        completedAt: new Date(),
+        workersReserved: 0 // CRITICAL: Zero out workers to prevent leaks
       });
 
       logger.error('❌ Failed to submit job to RunPod', {

@@ -22,6 +22,7 @@ import vpsVideoRoutes, { setJobService as setVPSJobService } from './routes/vpsV
 import vpsAudioRoutes from './routes/vpsAudio.routes';
 import jobRoutes, { setJobService } from './routes/jobs.routes';
 import imageGenerationRoutes from './routes/imageGeneration.routes';
+import adminRoutes, { setJobStorage } from './routes/admin.routes';
 
 // Importar cleanup scheduler
 import { startCleanupScheduler } from './utils/cleanup';
@@ -61,6 +62,9 @@ async function initializeQueueSystem() {
     setVideoJobService(queueSystem.jobService);
     setCaptionJobService(queueSystem.jobService);
     setVPSJobService(queueSystem.jobService);
+
+    // Inject JobStorage into admin routes
+    setJobStorage(queueSystem.storage);
 
     // Start queue system
     queueSystem.start();
@@ -209,6 +213,9 @@ app.use('/', imageGenerationRoutes);
 
 // Job management routes
 app.use('/', jobRoutes);
+
+// Admin routes (worker recovery, monitoring)
+app.use('/', adminRoutes);
 
 // Root endpoint
 app.get('/', (_req, res) => {
