@@ -397,21 +397,29 @@ def download_google_drive_file(url: str, output_path: Path) -> None:
         if file_size == 0:
             raise ValueError(f"Downloaded file is empty: {url}")
 
-        # Verify it's actually a video file (not an error HTML page)
-        # Check for MP4 magic number (first 4 bytes should contain 'ftyp')
+        # Verify it's not an error HTML page (Google Drive sometimes returns HTML instead of file)
         with open(output_path, 'rb') as f:
-            header = f.read(12)
+            header = f.read(500)
+            # Check if it's an HTML error page
+            content_start = header.decode('utf-8', errors='ignore')
+            if '<html' in content_start.lower() or '<!doctype' in content_start.lower():
+                raise ValueError(f"Google Drive returned HTML instead of file. File may be private or restricted. First 200 chars: {content_start[:200]}")
+
+            # Check for valid file formats (MP4, MP3, WAV, etc.)
+            # MP4: 'ftyp' at offset 4-8
+            # MP3: starts with 'ID3' or has 0xFF 0xFB sync pattern
+            # WAV: starts with 'RIFF' and contains 'WAVE'
             if len(header) >= 12:
-                # MP4 files have 'ftyp' at offset 4-8
-                if b'ftyp' not in header:
-                    # Might be HTML error page
-                    logger.error(f"❌ Downloaded file doesn't appear to be a valid video: {output_path}")
-                    # Read first 500 bytes to check if it's HTML
-                    f.seek(0)
-                    content = f.read(500).decode('utf-8', errors='ignore')
-                    if '<html' in content.lower() or '<!doctype' in content.lower():
-                        raise ValueError(f"Google Drive returned HTML instead of video. File may be private or restricted. First 200 chars: {content[:200]}")
-                    raise ValueError(f"Downloaded file doesn't appear to be a valid MP4 video")
+                is_mp4 = b'ftyp' in header[:12]
+                is_mp3 = header[:3] == b'ID3' or (header[0] == 0xFF and header[1] & 0xE0 == 0xE0)
+                is_wav = header[:4] == b'RIFF' and b'WAVE' in header[:20]
+
+                if not (is_mp4 or is_mp3 or is_wav):
+                    logger.warning(f"⚠️ Downloaded file format unknown (not MP4/MP3/WAV): {output_path.name}")
+                    # Don't fail - might be other valid format
+                else:
+                    format_name = 'MP4' if is_mp4 else ('MP3' if is_mp3 else 'WAV')
+                    logger.info(f"✓ Validated file format: {format_name}")
 
     except requests.exceptions.RequestException as e:
         logger.error(f"❌ Google Drive download failed: {e}")
