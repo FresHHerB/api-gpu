@@ -28,13 +28,15 @@ X_API_KEY=your-secure-api-key
   - [POST /runpod/video/addaudio](#post-runpodvideoaddaudio) - Add/replace audio
   - [POST /runpod/video/concatenate](#post-runpodvideoconcatenate) - Merge videos
   - [POST /runpod/video/concat_video_audio](#post-runpodvideoconcat_video_audio) - Cycle videos to audio
+  - [POST /runpod/video/trilhasonora](#post-runpodvideotrilhasonora) - Add background music
 
 - [VPS CPU Endpoints](#vps-cpu-video-processing)
   - [POST /vps/video/*](#vps-video-endpoints) - Same operations, CPU-based
   - [POST /vps/video/transcribe_youtube](#post-vpsvideotranscribe_youtube) - Extract YouTube captions
 
 ### Audio Processing
-- [POST /runpod/audio/transcribe](#post-runpodaudiotranscribe) - Whisper transcription (GPU)
+- [POST /runpod/audio/transcribe](#post-runpodaudiotranscribe) - Faster-Whisper transcription (GPU)
+- [POST /runpod/audio/transcribe-whisper](#post-runpodaudiotranscribe-whisper) - OpenAI Whisper Official (GPU)
 - [POST /vps/audio/concatenate](#post-vpsaudioconcatenate) - Merge audio files (CPU)
 - [GET /vps/audio/health](#get-vpsaudiohealth) - Audio service health
 
@@ -52,8 +54,10 @@ X_API_KEY=your-secure-api-key
 - [GET /admin/workers/status](#get-adminworkersstatus) - Worker diagnostics
 
 ### Health Checks
+- [GET /](#get--root) - API information
 - [GET /health](#get-health) - Orchestrator health
-- [GET /runpod/audio/transcribe/health](#get-runpodaudiotranscribehealth) - Transcription health
+- [GET /runpod/audio/transcribe/health](#get-runpodaudiotranscribehealth) - Faster-Whisper health
+- [GET /runpod/audio/transcribe-whisper/health](#get-runpodaudiotranscribe-whisperhealth) - OpenAI Whisper health
 
 ### Reference
 - [Webhooks](#webhooks)
@@ -196,6 +200,7 @@ Unified endpoint for styled captions with GPU acceleration. Supports two modes:
 | `path` | string | ✅ | S3 upload prefix |
 | `output_filename` | string | ✅ | Output filename (e.g., "video_final.mp4") |
 | `type` | string | ✅ | Caption type: `"segments"` or `"highlight"` |
+| `uppercase` | boolean | ❌ | `false` | Convert all text to uppercase |
 | `style` | object | ❌ | Style customization (see type-specific schemas) |
 
 ---
@@ -457,6 +462,68 @@ Cycle videos repeatedly to match audio duration.
 
 **Behavior:** Videos loop until audio duration is matched.
 
+**Google Drive Support:** This endpoint supports Google Drive URLs in the `video_urls` array. URLs can be in the format:
+- `https://drive.google.com/file/d/FILE_ID/view`
+- The system automatically handles download of large files (>25MB) from Google Drive
+
+**Additional Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `normalize` | boolean | ❌ | `true` | Normalize audio levels when mixing |
+
+---
+
+### POST /runpod/video/trilhasonora
+
+Add background music (trilha sonora) to video with automatic volume reduction to prevent audio overlap.
+
+**Authentication:** Required
+**Type:** Asynchronous (202 Accepted)
+
+**Request:**
+```json
+{
+  "webhook_url": "https://n8n.example.com/webhook/trilha",
+  "id_roteiro": 129,
+  "url_video": "https://cdn.example.com/video.mp4",
+  "trilha_sonora": "https://cdn.example.com/background-music.mp3",
+  "path": "Channel/Video/final/",
+  "output_filename": "video_with_music.mp4",
+  "volume_reduction_db": 18
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `webhook_url` | string (URL) | ✅ | - | Callback URL |
+| `id_roteiro` | number | ❌ | - | Script ID |
+| `url_video` | string (URL) | ✅ | - | Video URL (MP4) |
+| `trilha_sonora` | string (URL) | ✅ | - | Background music URL (MP3, AAC, WAV) |
+| `path` | string | ✅ | - | S3 upload prefix |
+| `output_filename` | string | ✅ | - | Output filename |
+| `volume_reduction_db` | number | ❌ | `18` | Volume reduction in dB (0-30) for original audio |
+
+**Response (202 Accepted):**
+```json
+{
+  "jobId": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "QUEUED",
+  "message": "Job queued successfully",
+  "createdAt": "2025-10-21T14:30:00.000Z"
+}
+```
+
+**Behavior:**
+- Reduces original video audio by specified dB amount (default: 18dB)
+- Mixes background music at full volume
+- Prevents audio overlap and maintains clarity
+- Background music loops if shorter than video duration
+
+**Google Drive Support:** Both `url_video` and `trilha_sonora` support Google Drive URLs with automatic download handling for files >25MB.
+
 ---
 
 ## VPS CPU Video Processing
@@ -486,34 +553,57 @@ Extract YouTube auto-generated captions using Playwright browser automation.
 **Request:**
 ```json
 {
-  "youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "path": "YouTube/Captions/",
-  "language": "pt"
+  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 }
 ```
 
 **Parameters:**
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `youtube_url` | string (URL) | ✅ | - | YouTube video URL |
-| `path` | string | ✅ | - | S3 upload prefix |
-| `language` | string | ❌ | `"pt"` | Caption language code |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `url` | string (URL) | ✅ | YouTube video URL (youtube.com/watch?v=... or youtu.be/...) |
 
 **Response (200 OK):**
 ```json
 {
-  "success": true,
-  "message": "Captions extracted successfully",
-  "captions": {
-    "srt_url": "https://s3.example.com/YouTube/Captions/video_id.srt",
-    "json_url": "https://s3.example.com/YouTube/Captions/video_id.json"
-  },
-  "video_title": "Never Gonna Give You Up",
-  "duration": "3:32",
-  "language": "pt"
+  "ok": true,
+  "source": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  "segments": [
+    {
+      "start": 0.0,
+      "duration": 3.5,
+      "text": "Never gonna give you up"
+    },
+    {
+      "start": 3.5,
+      "duration": 2.8,
+      "text": "Never gonna let you down"
+    }
+  ],
+  "segments_count": 42,
+  "language": "en",
+  "duration": 212.5,
+  "cached": false,
+  "execution_time_ms": 4523
 }
 ```
+
+**Error Response:**
+```json
+{
+  "ok": false,
+  "source": "https://www.youtube.com/watch?v=invalid",
+  "error": "Failed to extract captions: Video not found",
+  "execution_time_ms": 1250
+}
+```
+
+**Features:**
+- Extracts auto-generated captions from YouTube
+- Caches results for improved performance
+- Returns segments with precise timing
+- Automatic language detection
+- Works with standard YouTube URLs and youtu.be short URLs
 
 ---
 
@@ -615,6 +705,95 @@ Transcribe audio to text using Faster Whisper (GPU-accelerated) with automatic s
 - 1 min audio: ~5-10s
 - 10 min audio: ~30-60s
 - 60 min audio: ~3-5 min
+
+---
+
+### POST /runpod/audio/transcribe-whisper
+
+Transcribe audio to text using OpenAI Whisper Official model (GPU-accelerated) with automatic subtitle generation.
+
+**Authentication:** Required
+**Type:** Synchronous (200 OK)
+
+**Request:**
+```json
+{
+  "audio_url": "https://example.com/podcast-episode-01.mp3",
+  "path": "Podcast/Season01/Episode01/",
+  "model": "base",
+  "language": "pt",
+  "beam_size": 5,
+  "temperature": 0.0
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `audio_url` | string (URL) | ✅ | - | Public audio URL (MP3, WAV, M4A, FLAC) |
+| `path` | string | ✅ | - | S3 upload prefix |
+| `model` | string | ❌ | `base` | Whisper model (see table below) |
+| `language` | string | ❌ | auto | ISO 639-1 code (`pt`, `en`, `es`, etc.) |
+| `beam_size` | number | ❌ | `5` | Beam search size (1-10, higher = better quality) |
+| `temperature` | number | ❌ | `0.0` | Sampling temperature (0-1, 0 = deterministic) |
+
+**OpenAI Whisper Official Models:**
+
+| Model | Parameters | Speed | Quality | VRAM | Best For |
+|-------|-----------|-------|---------|------|----------|
+| `tiny` | 39M | ⚡⚡⚡⚡⚡ | ⭐⭐ | 1GB | Quick drafts, testing |
+| `base` | 74M | ⚡⚡⚡⚡ | ⭐⭐⭐ | 1GB | **Default - Fast transcription** |
+| `small` | 244M | ⚡⚡⚡ | ⭐⭐⭐⭐ | 2GB | Balanced speed/quality |
+| `medium` | 769M | ⚡⚡ | ⭐⭐⭐⭐⭐ | 5GB | High quality |
+| `large` | 1550M | ⚡ | ⭐⭐⭐⭐⭐ | 10GB | Best accuracy + translation |
+
+**Differences from Faster-Whisper:**
+- Official OpenAI implementation (not CTranslate2)
+- No VAD (Voice Activity Detection) option
+- Model names: `tiny`, `base`, `small`, `medium`, `large` (no `large-v3` or `turbo`)
+- Generally slower but more accurate for translation tasks
+- Better multilingual support
+
+**Response (200 OK):**
+```json
+{
+  "code": 200,
+  "message": "Transcription completed successfully",
+  "job_id": "550e8400-e29b-41d4-a716-446655440000",
+  "language": "pt",
+  "transcription": "Era uma vez uma história incrível sobre...",
+  "files": {
+    "segments": {
+      "srt": "https://s3.example.com/Podcast/Season01/Episode01/segments.srt",
+      "vtt": "",
+      "json": "https://s3.example.com/Podcast/Season01/Episode01/segments.json"
+    },
+    "words": {
+      "ass_karaoke": "https://s3.example.com/Podcast/Season01/Episode01/karaoke.ass",
+      "vtt_karaoke": "",
+      "lrc": "",
+      "json": "https://s3.example.com/Podcast/Season01/Episode01/words.json"
+    }
+  },
+  "execution": {
+    "startTime": "2025-10-21T12:00:00.000Z",
+    "endTime": "2025-10-21T12:02:30.000Z",
+    "durationMs": 150000,
+    "durationSeconds": 150
+  },
+  "stats": {
+    "segments": 42,
+    "words": 256,
+    "model": "base",
+    "device": "cuda"
+  }
+}
+```
+
+**When to Use:**
+- **Faster-Whisper (`/transcribe`)**: Best for speed, large-v3 and turbo models, VAD support
+- **OpenAI Whisper (`/transcribe-whisper`)**: Official implementation, better for research/comparison
 
 ---
 
@@ -893,6 +1072,36 @@ Get detailed diagnostic information about workers and active jobs.
 
 ## Health Checks
 
+### GET / (Root)
+
+API information endpoint (no authentication required).
+
+**Response:**
+```json
+{
+  "service": "AutoDark API GPU",
+  "version": "4.0.0",
+  "status": "operational",
+  "timestamp": "2025-10-21T12:00:00.000Z",
+  "features": [
+    "GPU Video Processing (RunPod)",
+    "CPU Video Processing (VPS)",
+    "Audio Transcription (Faster-Whisper & OpenAI Whisper)",
+    "Image Generation (AI)",
+    "YouTube Caption Extraction",
+    "Queue Management",
+    "Webhook Notifications"
+  ],
+  "endpoints": {
+    "documentation": "/docs/API.md",
+    "health": "/health",
+    "queue_stats": "/queue/stats"
+  }
+}
+```
+
+---
+
 ### GET /health
 
 Orchestrator general health check (no authentication required).
@@ -919,7 +1128,7 @@ Orchestrator general health check (no authentication required).
 
 ### GET /runpod/audio/transcribe/health
 
-Transcription service health check (no authentication required).
+Faster-Whisper transcription service health check (no authentication required).
 
 **Response:**
 ```json
@@ -929,6 +1138,25 @@ Transcription service health check (no authentication required).
   "whisper": {
     "healthy": true,
     "endpoint": "82jjrwujznxwvn"
+  },
+  "timestamp": "2025-10-21T12:00:00.000Z"
+}
+```
+
+---
+
+### GET /runpod/audio/transcribe-whisper/health
+
+OpenAI Whisper Official transcription service health check (no authentication required).
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "service": "transcription-whisper-official",
+  "whisper": {
+    "healthy": true,
+    "endpoint": "whisper_endpoint_id"
   },
   "timestamp": "2025-10-21T12:00:00.000Z"
 }
@@ -1252,7 +1480,18 @@ interface WebhookPayload {
 
 ## Changelog
 
-### v4.0.0 (Current)
+### v4.1.0 (Current - 2025-10-23)
+- ✅ **NEW:** Added `/runpod/audio/transcribe-whisper` - OpenAI Whisper Official endpoint
+- ✅ **NEW:** Added `/runpod/video/trilhasonora` - Background music with volume reduction
+- ✅ **NEW:** Added `GET /` root endpoint with API information
+- ✅ **UPDATED:** `/vps/video/transcribe_youtube` now accepts single `url` parameter
+- ✅ **FEATURE:** Google Drive support in `concat_video_audio` endpoint (files >25MB)
+- ✅ **FEATURE:** Added `uppercase` parameter to `caption_style` endpoint
+- ✅ **FEATURE:** Added `normalize` parameter to `concat_video_audio` endpoint
+- ✅ Enhanced health checks for both Whisper implementations
+- ✅ Complete documentation update with all 30+ endpoints
+
+### v4.0.0
 - ✅ Consolidated API documentation
 - ✅ Updated endpoint prefixes: `/runpod/*` and `/vps/*`
 - ✅ Added VPS local processing endpoints
@@ -1284,5 +1523,5 @@ interface WebhookPayload {
 
 ---
 
-**Last Updated:** 2025-10-22
-**API Version:** 4.0.0
+**Last Updated:** 2025-10-23
+**API Version:** 4.1.0

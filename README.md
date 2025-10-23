@@ -22,11 +22,14 @@ AutoDark API GPU is a production-ready, scalable video processing platform that 
 
 | Feature | Description | Performance |
 |---------|-------------|-------------|
-| **Audio Transcription** | Faster Whisper GPU with SRT/ASS karaoke output | 10min audio → 30-60s |
+| **Audio Transcription (Faster-Whisper)** | GPU-accelerated transcription with SRT/ASS karaoke output | 10min audio → 30-60s |
+| **Audio Transcription (OpenAI Whisper)** | Official OpenAI Whisper model for highest accuracy | 10min audio → 30-60s |
 | **Image to Video** | Ken Burns effects with customizable zoom patterns | 1 image → ~7s (CPU-optimized) |
 | **Styled Captions** | ASS subtitles with full customization (segments/karaoke) | 10s video → ~6-8s |
+| **Background Music** | Add trilha sonora with automatic volume reduction | 10s video → ~5-7s |
 | **Audio Sync** | Replace or add audio tracks to videos | 10s video → ~4-6s |
 | **Video Concatenation** | Merge multiple videos with transition handling | 2 videos → ~8-10s |
+| **Audio Concatenation** | Merge multiple audio files (MP3/AAC/WAV) | 3 files → ~2-4s |
 | **YouTube Transcription** | Extract auto-generated captions from YouTube | Real-time |
 | **Image Generation** | AI image generation via Runware/OpenRouter | Variable |
 
@@ -611,11 +614,16 @@ npm run lint:fix             # Auto-fix issues
 | `/runpod/video/concatenate` | POST | Async | Merge multiple videos |
 | `/runpod/video/caption_style` | POST | Async | Add styled ASS captions |
 | `/runpod/video/concat_video_audio` | POST | Async | Cycle videos to match audio |
+| `/runpod/video/trilhasonora` | POST | Async | Add background music with volume reduction |
 | **Video Processing (VPS CPU)** ||||
-| `/vps/video/*` | POST | Async | Same operations, CPU-based |
+| `/vps/video/img2vid` | POST | Async | Image to video (CPU-based) |
+| `/vps/video/addaudio` | POST | Async | Add audio (CPU-based) |
+| `/vps/video/concatenate` | POST | Async | Concatenate videos (CPU-based) |
+| `/vps/video/caption_style` | POST | Async | Add captions (CPU-based) |
 | `/vps/video/transcribe_youtube` | POST | Sync | Extract YouTube captions |
 | **Audio Processing** ||||
-| `/runpod/audio/transcribe` | POST | Sync | Whisper transcription |
+| `/runpod/audio/transcribe` | POST | Sync | Faster-Whisper transcription |
+| `/runpod/audio/transcribe-whisper` | POST | Sync | OpenAI Whisper Official |
 | `/vps/audio/concatenate` | POST | Sync | Merge audio files |
 | **Image Generation** ||||
 | `/vps/imagem/gerarPrompts` | POST | Sync | Generate AI prompts |
@@ -628,8 +636,10 @@ npm run lint:fix             # Auto-fix issues
 | `/admin/recover-workers` | POST | - | Recover leaked workers |
 | `/admin/workers/status` | GET | - | Worker diagnostics |
 | **Health** ||||
+| `/` | GET | - | API information |
 | `/health` | GET | - | Orchestrator health |
-| `/runpod/audio/transcribe/health` | GET | - | Transcription health |
+| `/runpod/audio/transcribe/health` | GET | - | Faster-Whisper health |
+| `/runpod/audio/transcribe-whisper/health` | GET | - | OpenAI Whisper health |
 | `/vps/audio/health` | GET | - | Audio processor health |
 
 See [API Reference](docs/API.md) for complete documentation.
