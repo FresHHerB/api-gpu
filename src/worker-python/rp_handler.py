@@ -983,24 +983,54 @@ def process_img2vid_batch(
 
 
 def get_duration(file_path: Path) -> float:
-    """Get duration of media file using ffprobe"""
+    """Get duration of media file using ffprobe with multiple fallback methods"""
     try:
         cmd = [
             'ffprobe',
             '-v', 'quiet',
             '-print_format', 'json',
             '-show_format',
+            '-show_streams',
             str(file_path)
         ]
 
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         import json
         metadata = json.loads(result.stdout)
-        duration = float(metadata['format']['duration'])
 
-        logger.info(f"Duration of {file_path.name}: {duration:.2f}s")
+        # Try multiple methods to get duration
+        duration = None
+
+        # Method 1: format.duration (most reliable for most files)
+        if 'format' in metadata and 'duration' in metadata['format']:
+            duration = float(metadata['format']['duration'])
+            logger.info(f"Duration from format.duration: {duration:.2f}s")
+
+        # Method 2: streams[0].duration (fallback for some audio files from Google Drive)
+        elif 'streams' in metadata and len(metadata['streams']) > 0:
+            if 'duration' in metadata['streams'][0]:
+                duration = float(metadata['streams'][0]['duration'])
+                logger.info(f"Duration from streams[0].duration: {duration:.2f}s")
+
+        # Method 3: Calculate from bitrate and size (last resort)
+        if duration is None and 'format' in metadata:
+            if 'size' in metadata['format'] and 'bit_rate' in metadata['format']:
+                size_bytes = int(metadata['format']['size'])
+                bit_rate = int(metadata['format']['bit_rate'])
+                duration = (size_bytes * 8) / bit_rate
+                logger.info(f"Duration calculated from size/bitrate: {duration:.2f}s")
+
+        if duration is None:
+            # Dump metadata for debugging
+            logger.error(f"No duration found in metadata. Full metadata: {json.dumps(metadata, indent=2)}")
+            raise RuntimeError("No duration information available in media file metadata")
+
+        logger.info(f"✓ Duration of {file_path.name}: {duration:.2f}s")
         return duration
 
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFprobe command failed for {file_path}: {e.stderr}")
+        raise RuntimeError(f"FFprobe failed: {e.stderr}")
     except Exception as e:
         logger.error(f"Failed to get duration for {file_path}: {e}")
         raise RuntimeError(f"Failed to get media duration: {e}")
@@ -1026,8 +1056,14 @@ def add_trilha_sonora(
         # Download video and soundtrack
         logger.info(f"📥 Downloading video from: {url_video}")
         download_file(url_video, video_path)
+
+        # Download trilha sonora (use specialized Google Drive downloader if needed)
         logger.info(f"📥 Downloading trilha sonora from: {trilha_sonora_url}")
-        download_file(trilha_sonora_url, trilha_path)
+        if 'drive.google.com' in trilha_sonora_url:
+            logger.info("🎵 Using Google Drive downloader for trilha sonora")
+            download_google_drive_file(trilha_sonora_url, trilha_path)
+        else:
+            download_file(trilha_sonora_url, trilha_path)
 
         # Get durations
         video_duration = get_duration(video_path)
