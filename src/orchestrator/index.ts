@@ -18,6 +18,7 @@ dotenv.config();
 import videoProxyRoutes, { setJobService as setVideoJobService } from './routes/videoProxy';
 import transcriptionRoutes from './routes/transcription';
 import captionUnifiedRoutes, { setJobService as setCaptionJobService } from './routes/caption-unified.routes';
+import trilhaSonoraRoutes, { setJobService as setTrilhaJobService } from './routes/trilhasonora.routes';
 import vpsVideoRoutes, { setJobService as setVPSJobService } from './routes/vpsVideo.routes';
 import vpsAudioRoutes from './routes/vpsAudio.routes';
 import jobRoutes, { setJobService } from './routes/jobs.routes';
@@ -61,6 +62,7 @@ async function initializeQueueSystem() {
     setJobService(queueSystem.jobService);
     setVideoJobService(queueSystem.jobService);
     setCaptionJobService(queueSystem.jobService);
+    setTrilhaJobService(queueSystem.jobService);
     setVPSJobService(queueSystem.jobService);
 
     // Inject JobStorage into admin routes
@@ -207,6 +209,9 @@ app.use('/', transcriptionRoutes);
 
 // Caption style routes (unified endpoint)
 app.use('/', captionUnifiedRoutes);
+
+// Trilha Sonora routes
+app.use('/', trilhaSonoraRoutes);
 
 // Image generation routes (OpenRouter + Runware)
 app.use('/', imageGenerationRoutes);

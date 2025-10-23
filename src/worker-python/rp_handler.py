@@ -1006,6 +1006,107 @@ def get_duration(file_path: Path) -> float:
         raise RuntimeError(f"Failed to get media duration: {e}")
 
 
+def add_trilha_sonora(
+    url_video: str,
+    trilha_sonora_url: str,
+    path: str,
+    output_filename: str,
+    volume_reduction_db: float = 18.0,
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """Add background music (trilha sonora) to video, looping to match video duration"""
+    job_id = str(uuid.uuid4())
+    logger.info(f"Starting trilha sonora job: {job_id}")
+
+    video_path = WORK_DIR / f"{job_id}_video.mp4"
+    trilha_path = WORK_DIR / f"{job_id}_trilha.mp3"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        # Download video and soundtrack
+        logger.info(f"📥 Downloading video from: {url_video}")
+        download_file(url_video, video_path)
+        logger.info(f"📥 Downloading trilha sonora from: {trilha_sonora_url}")
+        download_file(trilha_sonora_url, trilha_path)
+
+        # Get durations
+        video_duration = get_duration(video_path)
+        trilha_duration = get_duration(trilha_path)
+
+        logger.info(f"📊 Duration: video={video_duration:.2f}s, trilha={trilha_duration:.2f}s")
+
+        # Calculate how many loops we need
+        loops_needed = int(video_duration / trilha_duration) + 1
+        logger.info(f"🔁 Trilha will be looped {loops_needed} times to match video duration")
+        logger.info(f"🔊 Volume reduction: -{volume_reduction_db}dB")
+
+        # Build FFmpeg filter complex:
+        # 1. Loop the soundtrack audio (aloop filter)
+        # 2. Reduce soundtrack volume
+        # 3. Mix original video audio with looped/reduced soundtrack
+        # 4. Cut to video duration
+        filter_complex = (
+            f"[1:a]aloop=loop={loops_needed}:size=2e+09[loop];"  # Loop soundtrack (size=2e+09 for safety)
+            f"[loop]volume=-{volume_reduction_db}dB[reduced];"   # Reduce volume
+            f"[0:a][reduced]amix=inputs=2:duration=first[aout]"  # Mix original + reduced soundtrack
+        )
+
+        # FFmpeg command - Use CPU encoding for VPS
+        logger.info("💻 Using CPU encoding (libx264)")
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', str(video_path),      # Input 0: video with original audio
+            '-i', str(trilha_path),      # Input 1: trilha sonora
+            '-filter_complex', filter_complex,
+            '-map', '0:v',               # Map video from input 0
+            '-map', '[aout]',            # Map mixed audio
+            '-c:v', 'libx264',
+            '-preset', 'medium',
+            '-crf', '23',
+            '-maxrate', '10M',
+            '-bufsize', '20M',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-shortest',                 # Cut to shortest stream (video duration)
+            '-movflags', '+faststart',
+            str(output_path)
+        ]
+
+        logger.info(f"Running FFmpeg: {' '.join(cmd[:20])}...")  # Log first 20 args
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ Trilha sonora added: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Upload to S3
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local files
+        output_path.unlink(missing_ok=True)
+
+        return {
+            'video_url': video_url,
+            'filename': output_filename,
+            's3_key': s3_key,
+            'video_duration': video_duration,
+            'trilha_duration': trilha_duration,
+            'loops_applied': loops_needed,
+            'volume_reduction_db': volume_reduction_db
+        }
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {e.stderr}")
+    finally:
+        # Cleanup input files
+        video_path.unlink(missing_ok=True)
+        trilha_path.unlink(missing_ok=True)
+
+
 def add_audio(
     url_video: str,
     url_audio: str,
@@ -2002,6 +2103,40 @@ def handler(job: Dict) -> Dict[str, Any]:
                 "audio_duration": result['audio_duration'],
                 "duration_diff_ms": result['duration_diff_ms'],
                 "message": f"Cyclic concatenation complete: {cycle_info}, {result['total_segments']} segments, sync precision: {result['duration_diff_ms']}ms"
+            }
+
+        elif operation == 'trilhasonora':
+            url_video = normalize_url(job_input.get('url_video'))
+            trilha_sonora_raw = job_input.get('trilha_sonora')
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
+            volume_reduction_db = job_input.get('volume_reduction_db', 18.0)
+
+            if not url_video or not trilha_sonora_raw or not path or not output_filename:
+                raise ValueError("Missing required fields: url_video, trilha_sonora, path, output_filename")
+
+            # Handle Google Drive URLs (don't normalize, will be converted during download)
+            if 'drive.google.com' in trilha_sonora_raw:
+                trilha_sonora = trilha_sonora_raw
+                logger.info("🎵 Google Drive URL detected for trilha sonora")
+            else:
+                trilha_sonora = normalize_url(trilha_sonora_raw)
+
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            logger.info(f"🎵 Adding trilha sonora with volume reduction: -{volume_reduction_db}dB")
+
+            result = add_trilha_sonora(url_video, trilha_sonora, path, output_filename, volume_reduction_db, worker_id)
+
+            return {
+                "success": True,
+                "video_url": result['video_url'],
+                "filename": result['filename'],
+                "s3_key": result['s3_key'],
+                "video_duration": result['video_duration'],
+                "trilha_duration": result['trilha_duration'],
+                "loops_applied": result['loops_applied'],
+                "volume_reduction_db": result['volume_reduction_db'],
+                "message": f"Trilha sonora added successfully ({result['loops_applied']} loops, -{result['volume_reduction_db']}dB)"
             }
 
         else:

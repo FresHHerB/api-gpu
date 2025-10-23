@@ -198,6 +198,7 @@ export class JobService {
       caption_segments: 2,
       caption_highlight: 2,
       concatenate: 3,
+      trilhasonora: 2,  // Audio mixing with looping
       // VPS operations (CPU-based, slower)
       img2vid_vps: 10,
       caption_segments_vps: 4,
