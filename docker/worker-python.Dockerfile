@@ -1,22 +1,29 @@
 # ==================================
-# Worker Python Dockerfile (RunPod Serverless)
+# Worker Python Dockerfile (RunPod Serverless with NVENC)
 # ==================================
-# Python slim + FFmpeg + Fonts for subtitle styling
-# CPU-Optimized for short video processing
-# Target: ~800MB with fonts for caption_style support
+# NVIDIA CUDA + Python + FFmpeg with NVENC support
+# GPU-Accelerated video processing with CPU fallback
+# Target: ~2GB with CUDA runtime + fonts
 
-FROM python:3.11-slim
+FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
 
 # Metadata
 LABEL maintainer="api-gpu-team"
-LABEL description="RunPod Serverless CPU-Optimized Worker (Python) - libx264 veryfast + Subtitle Fonts"
-LABEL version="3.0.0-cpu-optimized"
+LABEL description="RunPod Serverless GPU Worker (Python) - NVENC h264_nvenc + CPU fallback"
+LABEL version="4.0.0-nvenc-enabled"
 
 # Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install FFmpeg + Fonts for subtitle rendering with custom styling
+# Install Python 3.11 + FFmpeg with NVENC + Fonts
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-distutils \
+    python3-pip \
     ffmpeg \
     ca-certificates \
     fontconfig \
@@ -29,6 +36,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
+# Set Python 3.11 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+
 # Log available fonts for debugging (shown during build)
 RUN echo "=== Fonts Available ===" && fc-list : family | sort -u
 
@@ -37,8 +48,8 @@ WORKDIR /app
 
 # Copy requirements and install Python dependencies
 COPY src/worker-python/requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
+RUN pip3 install --no-cache-dir --upgrade pip \
+    && pip3 install --no-cache-dir -r requirements.txt \
     && rm -rf /root/.cache/pip
 
 # Copy handler and caption generator
@@ -50,10 +61,15 @@ COPY src/worker-python/caption_generator.py .
 RUN mkdir -p /tmp/work /tmp/output /dev/shm/work /dev/shm/output && \
     chmod 777 /tmp/work /tmp/output
 
-# Environment variables
+# Environment variables for Python
 ENV PYTHONUNBUFFERED=1
+
+# NVIDIA GPU runtime configuration
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+
 # Note: WORK_DIR and BATCH_SIZE are calculated dynamically at runtime
-# No longer hardcoded - worker auto-detects optimal values
+# Worker auto-detects GPU availability and optimal settings
 
 # RunPod Serverless entry point
-CMD ["python", "-u", "rp_handler.py"]
+CMD ["python3", "-u", "rp_handler.py"]

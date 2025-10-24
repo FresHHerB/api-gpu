@@ -238,27 +238,210 @@ def reconfigure_s3(s3_config: Dict[str, str]) -> None:
 
 # GPU Detection
 def check_gpu_available() -> bool:
-    """Check if NVIDIA GPU is available for CUDA/NVENC encoding"""
+    """
+    Check if NVIDIA GPU with NVENC support is actually available and functional.
+    Tests real NVENC encoding capability, not just GPU presence.
+    """
     try:
-        # Try nvidia-smi
+        # Step 1: Check if nvidia-smi detects GPU
         result = subprocess.run(
             ['nvidia-smi', '--query-gpu=gpu_name', '--format=csv,noheader'],
             capture_output=True,
             text=True,
             timeout=5
         )
-        if result.returncode == 0 and result.stdout.strip():
-            gpu_name = result.stdout.strip().split('\n')[0]
-            logger.info(f"✅ GPU detected: {gpu_name}")
-            return True
-    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
-        logger.warning(f"⚠️ GPU detection failed: {e}")
 
-    logger.warning("⚠️ No GPU detected - will use CPU encoding")
+        if result.returncode != 0 or not result.stdout.strip():
+            logger.warning("⚠️ nvidia-smi: No GPU found")
+            return False
+
+        gpu_name = result.stdout.strip().split('\n')[0]
+        logger.info(f"🔍 GPU detected by nvidia-smi: {gpu_name}")
+
+        # Step 2: Test if FFmpeg can actually use NVENC
+        logger.info("🧪 Testing NVENC encoder capability...")
+        test_cmd = [
+            'ffmpeg',
+            '-hide_banner',
+            '-f', 'lavfi',
+            '-i', 'nullsrc=s=256x256:d=1',
+            '-c:v', 'h264_nvenc',
+            '-f', 'null',
+            '-'
+        ]
+
+        test_result = subprocess.run(
+            test_cmd,
+            capture_output=True,
+            text=True,
+            timeout=15
+        )
+
+        if test_result.returncode == 0:
+            logger.info(f"✅ NVENC encoder available and working on {gpu_name}")
+            return True
+        else:
+            # Check for specific NVENC errors
+            stderr = test_result.stderr.lower()
+            if 'no capable devices' in stderr or 'unsupported device' in stderr:
+                logger.warning(f"⚠️ GPU found but NVENC not available: {gpu_name}")
+                logger.warning("💡 This GPU may not support NVENC or drivers are missing")
+            elif 'cannot load' in stderr or 'not found' in stderr:
+                logger.warning("⚠️ NVENC libraries not found in container")
+            else:
+                logger.warning(f"⚠️ NVENC test failed: {test_result.stderr[:200]}")
+
+    except FileNotFoundError:
+        logger.warning("⚠️ nvidia-smi or ffmpeg not found")
+    except subprocess.TimeoutExpired:
+        logger.warning("⚠️ GPU detection timeout")
+    except Exception as e:
+        logger.warning(f"⚠️ GPU/NVENC detection error: {e}")
+
+    logger.warning("⚠️ No functional NVENC found - will use CPU encoding (libx264)")
     return False
 
 # Global GPU availability flag (checked once at startup)
 GPU_AVAILABLE = check_gpu_available()
+
+
+def run_ffmpeg_with_fallback(
+    input_file: str,
+    output_file: str,
+    video_filters: str = None,
+    audio_codec: str = 'copy',
+    extra_input_args: list = None,
+    extra_output_args: list = None,
+    timeout: int = 3600
+) -> subprocess.CompletedProcess:
+    """
+    Run FFmpeg with automatic GPU/CPU fallback.
+
+    Tries h264_nvenc first (if GPU available), falls back to libx264 automatically.
+
+    Args:
+        input_file: Path to input file
+        output_file: Path to output file
+        video_filters: FFmpeg video filter string (-vf)
+        audio_codec: Audio codec (default: copy)
+        extra_input_args: Additional args before input (-i)
+        extra_output_args: Additional args before output file
+        timeout: Command timeout in seconds
+
+    Returns:
+        subprocess.CompletedProcess from successful encoder
+
+    Raises:
+        RuntimeError: If both GPU and CPU encoding fail
+    """
+    encoder_configs = [
+        {
+            'name': 'h264_nvenc',
+            'label': '🎮 GPU (NVENC)',
+            'skip': not GPU_AVAILABLE,
+            'args': [
+                '-c:v', 'h264_nvenc',
+                '-preset', 'p4',
+                '-tune', 'hq',
+                '-rc:v', 'vbr',
+                '-cq:v', '23',
+                '-b:v', '0',
+                '-maxrate', '10M',
+                '-bufsize', '20M'
+            ]
+        },
+        {
+            'name': 'libx264',
+            'label': '💻 CPU (libx264)',
+            'skip': False,
+            'args': [
+                '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-crf', '23',
+                '-maxrate', '10M',
+                '-bufsize', '20M'
+            ]
+        }
+    ]
+
+    last_error = None
+
+    for config in encoder_configs:
+        if config['skip']:
+            logger.info(f"⏭️ Skipping {config['label']} (not available)")
+            continue
+
+        # Build FFmpeg command
+        cmd = ['ffmpeg', '-y']
+
+        # Extra input args
+        if extra_input_args:
+            cmd.extend(extra_input_args)
+
+        # Input file
+        cmd.extend(['-i', input_file])
+
+        # Video filters
+        if video_filters:
+            cmd.extend(['-vf', video_filters])
+
+        # Video encoder args
+        cmd.extend(config['args'])
+
+        # Audio codec
+        cmd.extend(['-c:a', audio_codec])
+
+        # Extra output args
+        if extra_output_args:
+            cmd.extend(extra_output_args)
+
+        # Output file
+        cmd.append(output_file)
+
+        try:
+            logger.info(f"🎬 {config['label']} encoding: {Path(output_file).name}")
+            logger.debug(f"Command: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=timeout
+            )
+
+            logger.info(f"✅ {config['label']} encoding successful")
+            return result
+
+        except subprocess.CalledProcessError as e:
+            # Check if it's a GPU-specific error
+            if config['name'] == 'h264_nvenc':
+                stderr_lower = e.stderr.lower()
+                if any(err in stderr_lower for err in [
+                    'no capable devices',
+                    'unsupported device',
+                    'cannot load',
+                    'nvenc'
+                ]):
+                    logger.warning(f"⚠️ {config['label']} failed (GPU issue)")
+                    logger.warning(f"Error: {e.stderr[:200]}")
+                    logger.info("🔄 Falling back to CPU encoding...")
+                    last_error = e
+                    continue
+
+            # Real FFmpeg error (not GPU-related)
+            logger.error(f"❌ {config['label']} encoding failed")
+            raise RuntimeError(f"FFmpeg {config['name']} failed: {e.stderr}")
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"⏱️ {config['label']} encoding timeout after {timeout}s")
+            raise RuntimeError(f"FFmpeg timeout after {timeout}s")
+
+    # All encoders failed
+    if last_error:
+        raise RuntimeError(f"All encoding attempts failed. Last error: {last_error.stderr}")
+    else:
+        raise RuntimeError("No encoders available")
 
 
 def normalize_url(url: str) -> str:
@@ -1146,29 +1329,89 @@ def add_trilha_sonora(
             f"[0:a][reduced]amix=inputs=2:duration=first[aout]"  # Mix original + reduced soundtrack
         )
 
-        # FFmpeg command - Use CPU encoding for VPS
-        logger.info("💻 Using CPU encoding (libx264)")
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', str(video_path),      # Input 0: video with original audio
-            '-i', str(trilha_path),      # Input 1: trilha sonora
-            '-filter_complex', filter_complex,
-            '-map', '0:v',               # Map video from input 0
-            '-map', '[aout]',            # Map mixed audio
-            '-c:v', 'libx264',
-            '-preset', 'medium',
-            '-crf', '23',
-            '-maxrate', '10M',
-            '-bufsize', '20M',
-            '-c:a', 'aac',
-            '-b:a', '192k',
-            '-shortest',                 # Cut to shortest stream (video duration)
-            '-movflags', '+faststart',
-            str(output_path)
+        # FFmpeg command with automatic GPU/CPU fallback
+        encoder_configs = [
+            {
+                'name': 'h264_nvenc',
+                'label': '🎮 GPU (NVENC)',
+                'skip': not GPU_AVAILABLE,
+                'hwaccel': [],  # No hwaccel for simpler approach
+                'video_args': [
+                    '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq',
+                    '-rc:v', 'vbr', '-cq:v', '23', '-b:v', '0',
+                    '-maxrate', '10M', '-bufsize', '20M'
+                ]
+            },
+            {
+                'name': 'libx264',
+                'label': '💻 CPU (libx264)',
+                'skip': False,
+                'hwaccel': [],
+                'video_args': [
+                    '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+                    '-maxrate', '10M', '-bufsize', '20M'
+                ]
+            }
         ]
 
-        logger.info(f"Running FFmpeg: {' '.join(cmd[:20])}...")  # Log first 20 args
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        last_error = None
+        encoder_used = None
+
+        for config in encoder_configs:
+            if config['skip']:
+                logger.info(f"⏭️ Skipping {config['label']} (not available)")
+                continue
+
+            try:
+                logger.info(f"🎬 {config['label']} trilha sonora encoding: {output_filename}")
+
+                cmd = ['ffmpeg', '-y']
+                cmd.extend(config['hwaccel'])
+                cmd.extend([
+                    '-i', str(video_path),     # Input 0: video with original audio
+                    '-i', str(trilha_path),    # Input 1: trilha sonora
+                    '-filter_complex', filter_complex,
+                    '-map', '0:v',             # Map video
+                    '-map', '[aout]'           # Map mixed audio
+                ])
+                cmd.extend(config['video_args'])
+                cmd.extend([
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ])
+
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                logger.info(f"✅ {config['label']} trilha sonora encoding successful")
+                encoder_used = config['name']
+                break  # Success - exit loop
+
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                stderr_lower = e.stderr.lower()
+
+                # Check if it's a GPU-specific error
+                if config['name'] == 'h264_nvenc' and any(
+                    err in stderr_lower for err in [
+                        'no capable devices',
+                        'unsupported device',
+                        'nvenc',
+                        'cannot load',
+                        'driver'
+                    ]
+                ):
+                    logger.warning(f"⚠️ {config['label']} failed (GPU issue)")
+                    logger.info("🔄 Falling back to CPU encoding...")
+                    continue  # Try next encoder
+                else:
+                    # Non-GPU error or last encoder failed
+                    logger.error(f"FFmpeg {config['name']} failed: {e.stderr}")
+                    raise RuntimeError(f"FFmpeg {config['name']} failed: {e.stderr}")
+        else:
+            # Loop completed without break - all encoders failed
+            raise RuntimeError(f"All encoding attempts failed: {last_error.stderr if last_error else 'Unknown error'}")
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced empty output")
@@ -1190,7 +1433,9 @@ def add_trilha_sonora(
             'video_duration': video_duration,
             'trilha_duration': trilha_duration,
             'loops_applied': loops_needed,
-            'volume_reduction_db': round(volume_reduction_db, 2)
+            'volume_reduction_db': round(volume_reduction_db, 2),
+            'gpu_accelerated': encoder_used == 'h264_nvenc',
+            'encoder': encoder_used
         }
 
         # Add audio analysis info if auto-normalization was used
@@ -1284,48 +1529,103 @@ def add_trilha_sonora_gpu(
         loops_needed = int(video_duration / trilha_duration) + 1
         logger.info(f"🔁 Trilha will be looped {loops_needed} times to match video duration")
 
-        # Build FFmpeg filter complex (same audio processing as CPU version)
+        # Build FFmpeg filter complex (same audio processing for both encoders)
         filter_complex = (
             f"[1:a]aloop=loop={loops_needed}:size=2e+09[loop];"
             f"[loop]volume=-{volume_reduction_db}dB[reduced];"
             f"[0:a][reduced]amix=inputs=2:duration=first[aout]"
         )
 
-        # FFmpeg command - Use GPU encoding (NVENC)
-        logger.info("🚀 Using GPU encoding (h264_nvenc) - NVIDIA Hardware Acceleration")
-        cmd = [
-            'ffmpeg', '-y',
-            '-hwaccel', 'cuda',           # Enable CUDA hardware acceleration
-            '-hwaccel_output_format', 'cuda',  # Keep frames in GPU memory
-            '-i', str(video_path),        # Input 0: video
-            '-i', str(trilha_path),       # Input 1: trilha sonora
-            '-filter_complex', filter_complex,
-            '-map', '0:v',                # Map video from input 0
-            '-map', '[aout]',             # Map mixed audio
-            '-c:v', 'h264_nvenc',         # NVIDIA GPU encoder
-            '-preset', 'p4',              # Preset 4 (medium - balance quality/speed)
-            '-tune', 'hq',                # High quality tuning
-            '-rc', 'vbr',                 # Variable bitrate
-            '-cq', '23',                  # Constant quality (like CRF)
-            '-b:v', '5M',                 # Target bitrate
-            '-maxrate', '10M',            # Max bitrate
-            '-bufsize', '20M',            # Buffer size
-            '-profile:v', 'high',         # H.264 High profile
-            '-c:a', 'aac',                # Audio codec
-            '-b:a', '192k',               # Audio bitrate
-            '-shortest',                  # Cut to shortest stream
-            '-movflags', '+faststart',    # Fast start for streaming
-            str(output_path)
+        # FFmpeg command with automatic GPU/CPU fallback
+        encoder_configs = [
+            {
+                'name': 'h264_nvenc',
+                'label': '🎮 GPU (NVENC)',
+                'skip': not GPU_AVAILABLE,
+                'hwaccel': ['-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda'],
+                'video_args': [
+                    '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq',
+                    '-rc', 'vbr', '-cq', '23', '-b:v', '5M',
+                    '-maxrate', '10M', '-bufsize', '20M', '-profile:v', 'high'
+                ]
+            },
+            {
+                'name': 'libx264',
+                'label': '💻 CPU (libx264)',
+                'skip': False,
+                'hwaccel': [],
+                'video_args': [
+                    '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+                    '-maxrate', '10M', '-bufsize', '20M'
+                ]
+            }
         ]
 
-        logger.info(f"Running FFmpeg with NVENC: {' '.join(cmd[:20])}...")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        last_error = None
+        encoder_used = None
+
+        for config in encoder_configs:
+            if config['skip']:
+                logger.info(f"⏭️ Skipping {config['label']} (not available)")
+                continue
+
+            try:
+                logger.info(f"🎬 {config['label']} trilha sonora encoding: {output_filename}")
+
+                cmd = ['ffmpeg', '-y']
+                cmd.extend(config['hwaccel'])  # Add hwaccel args (empty for CPU)
+                cmd.extend([
+                    '-i', str(video_path),     # Input 0: video
+                    '-i', str(trilha_path),    # Input 1: trilha sonora
+                    '-filter_complex', filter_complex,
+                    '-map', '0:v',             # Map video
+                    '-map', '[aout]'           # Map mixed audio
+                ])
+                cmd.extend(config['video_args'])
+                cmd.extend([
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ])
+
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                logger.info(f"✅ {config['label']} trilha sonora encoding successful")
+                encoder_used = config['name']
+                break  # Success - exit loop
+
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                stderr_lower = e.stderr.lower()
+
+                # Check if it's a GPU-specific error
+                if config['name'] == 'h264_nvenc' and any(
+                    err in stderr_lower for err in [
+                        'no capable devices',
+                        'unsupported device',
+                        'nvenc',
+                        'cannot load',
+                        'driver',
+                        'cuda'
+                    ]
+                ):
+                    logger.warning(f"⚠️ {config['label']} failed (GPU issue)")
+                    logger.info("🔄 Falling back to CPU encoding...")
+                    continue  # Try next encoder
+                else:
+                    # Non-GPU error or last encoder failed
+                    logger.error(f"FFmpeg {config['name']} failed: {e.stderr}")
+                    raise RuntimeError(f"FFmpeg {config['name']} failed: {e.stderr}")
+        else:
+            # Loop completed without break - all encoders failed
+            raise RuntimeError(f"All encoding attempts failed: {last_error.stderr if last_error else 'Unknown error'}")
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced empty output")
 
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
-        logger.info(f"✅ GPU Trilha sonora added: {output_filename} ({file_size_mb:.2f} MB)")
+        logger.info(f"✅ Trilha sonora added: {output_filename} ({file_size_mb:.2f} MB)")
 
         # Upload to S3
         s3_key = f"{path}{output_filename}"
@@ -1342,8 +1642,8 @@ def add_trilha_sonora_gpu(
             'trilha_duration': trilha_duration,
             'loops_applied': loops_needed,
             'volume_reduction_db': round(volume_reduction_db, 2),
-            'gpu_accelerated': True,
-            'encoder': 'h264_nvenc'
+            'gpu_accelerated': encoder_used == 'h264_nvenc',
+            'encoder': encoder_used
         }
 
         # Add audio analysis info if auto-normalization was used
@@ -1404,56 +1704,85 @@ def add_audio(
 
         logger.info(f"Speed adjustment: {speed_factor:.3f}x (pts={pts_multiplier:.6f})")
 
-        # FFmpeg command - GPU or CPU encoding based on availability
+        # FFmpeg with automatic GPU/CPU fallback
         # Note: CPU decode → CPU filter (setpts) → GPU/CPU encode
         # We don't use -hwaccel cuda because setpts filter is CPU-only
-        # and causes "Impossible to convert between formats" error
-        if GPU_AVAILABLE:
-            logger.info("🎮 Using GPU encoding (NVENC)")
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-i', str(audio_path),
-                '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
-                '-map', '[vout]',
-                '-map', '1:a',
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p4',
-                '-tune', 'hq',
-                '-rc:v', 'vbr',
-                '-cq:v', '23',
-                '-b:v', '0',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-shortest',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
-        else:
-            logger.info("💻 Using CPU encoding (libx264)")
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-i', str(audio_path),
-                '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
-                '-map', '[vout]',
-                '-map', '1:a',
-                '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '23',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-shortest',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
+        encoder_configs = [
+            {'name': 'h264_nvenc', 'label': '🎮 GPU (NVENC)', 'skip': not GPU_AVAILABLE},
+            {'name': 'libx264', 'label': '💻 CPU (libx264)', 'skip': False}
+        ]
 
-        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        last_error = None
+        for config in encoder_configs:
+            if config['skip']:
+                logger.info(f"⏭️ Skipping {config['label']} (not available)")
+                continue
+
+            if config['name'] == 'h264_nvenc':
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(video_path),
+                    '-i', str(audio_path),
+                    '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
+                    '-map', '[vout]',
+                    '-map', '1:a',
+                    '-c:v', 'h264_nvenc',
+                    '-preset', 'p4',
+                    '-tune', 'hq',
+                    '-rc:v', 'vbr',
+                    '-cq:v', '23',
+                    '-b:v', '0',
+                    '-maxrate', '10M',
+                    '-bufsize', '20M',
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ]
+            else:  # libx264
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-i', str(video_path),
+                    '-i', str(audio_path),
+                    '-filter_complex', f'[0:v]setpts={pts_multiplier:.6f}*PTS[vout]',
+                    '-map', '[vout]',
+                    '-map', '1:a',
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', '23',
+                    '-maxrate', '10M',
+                    '-bufsize', '20M',
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-shortest',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ]
+
+            try:
+                logger.info(f"🎬 {config['label']} encoding")
+                logger.debug(f"Command: {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=3600)
+                logger.info(f"✅ {config['label']} encoding successful")
+                break
+
+            except subprocess.CalledProcessError as e:
+                if config['name'] == 'h264_nvenc':
+                    stderr_lower = e.stderr.lower()
+                    if any(err in stderr_lower for err in ['no capable devices', 'unsupported device', 'nvenc']):
+                        logger.warning(f"⚠️ {config['label']} failed (GPU issue)")
+                        logger.warning(f"Error: {e.stderr[:200]}")
+                        logger.info("🔄 Falling back to CPU encoding...")
+                        last_error = e
+                        continue
+                logger.error(f"❌ {config['label']} encoding failed")
+                raise RuntimeError(f"FFmpeg {config['name']} failed: {e.stderr}")
+        else:
+            if last_error:
+                raise RuntimeError(f"All encoding attempts failed. Last error: {last_error.stderr}")
+            else:
+                raise RuntimeError("No encoders available")
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced empty output")
@@ -1526,50 +1855,82 @@ def concatenate_videos(
 
         logger.info(f"Generated concat list with {len(input_files)} files")
 
-        # FFmpeg concat command - GPU or CPU encoding
-        # Use concat demuxer with -c copy for fast concatenation (no re-encoding)
-        # This works when all videos have same codec/resolution/fps
-        # If videos differ, we'll need to re-encode
-        if GPU_AVAILABLE:
-            logger.info("🎮 Using GPU encoding (NVENC) for concatenation")
-            cmd = [
-                'ffmpeg', '-y',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', str(concat_list_path),
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p4',
-                '-tune', 'hq',
-                '-rc:v', 'vbr',
-                '-cq:v', '23',
-                '-b:v', '0',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
-        else:
-            logger.info("💻 Using CPU encoding (libx264) for concatenation")
-            cmd = [
-                'ffmpeg', '-y',
-                '-f', 'concat',
-                '-safe', '0',
-                '-i', str(concat_list_path),
-                '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '23',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
+        # FFmpeg concat command with automatic GPU/CPU fallback
+        # Use concat demuxer with re-encoding
+        # This works when videos have different specs
+        encoder_configs = [
+            {
+                'name': 'h264_nvenc',
+                'label': '🎮 GPU (NVENC)',
+                'skip': not GPU_AVAILABLE,
+                'args': [
+                    '-c:v', 'h264_nvenc', '-preset', 'p4', '-tune', 'hq',
+                    '-rc:v', 'vbr', '-cq:v', '23', '-b:v', '0',
+                    '-maxrate', '10M', '-bufsize', '20M'
+                ]
+            },
+            {
+                'name': 'libx264',
+                'label': '💻 CPU (libx264)',
+                'skip': False,
+                'args': [
+                    '-c:v', 'libx264', '-preset', 'medium', '-crf', '23',
+                    '-maxrate', '10M', '-bufsize', '20M'
+                ]
+            }
+        ]
 
-        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        last_error = None
+        for config in encoder_configs:
+            if config['skip']:
+                logger.info(f"⏭️ Skipping {config['label']} (not available)")
+                continue
+
+            try:
+                logger.info(f"🎬 {config['label']} concatenation: {output_filename}")
+
+                cmd = [
+                    'ffmpeg', '-y',
+                    '-f', 'concat',
+                    '-safe', '0',
+                    '-i', str(concat_list_path)
+                ]
+                cmd.extend(config['args'])
+                cmd.extend([
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                    '-movflags', '+faststart',
+                    str(output_path)
+                ])
+
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                logger.info(f"✅ {config['label']} concatenation successful")
+                break  # Success - exit loop
+
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                stderr_lower = e.stderr.lower()
+
+                # Check if it's a GPU-specific error
+                if config['name'] == 'h264_nvenc' and any(
+                    err in stderr_lower for err in [
+                        'no capable devices',
+                        'unsupported device',
+                        'nvenc',
+                        'cannot load',
+                        'driver'
+                    ]
+                ):
+                    logger.warning(f"⚠️ {config['label']} failed (GPU issue)")
+                    logger.info("🔄 Falling back to CPU encoding...")
+                    continue  # Try next encoder
+                else:
+                    # Non-GPU error or last encoder failed
+                    logger.error(f"FFmpeg {config['name']} failed: {e.stderr}")
+                    raise RuntimeError(f"FFmpeg {config['name']} failed: {e.stderr}")
+        else:
+            # Loop completed without break - all encoders failed
+            raise RuntimeError(f"All encoding attempts failed: {last_error.stderr if last_error else 'Unknown error'}")
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced empty output")
@@ -1986,43 +2347,14 @@ def add_caption_segments(
         # Normalize ASS path for FFmpeg (escape colons)
         normalized_ass = str(ass_path).replace('\\', '/').replace(':', '\\:')
 
-        # FFmpeg command with ASS subtitles
-        if GPU_AVAILABLE:
-            logger.info("🎮 Using GPU encoding (NVENC)")
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-vf', f"ass='{normalized_ass}'",
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p4',
-                '-tune', 'hq',
-                '-rc:v', 'vbr',
-                '-cq:v', '23',
-                '-b:v', '0',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'copy',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
-        else:
-            logger.info("💻 Using CPU encoding (libx264)")
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-vf', f"ass='{normalized_ass}'",
-                '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '23',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'copy',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
-
-        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # FFmpeg with automatic GPU/CPU fallback
+        run_ffmpeg_with_fallback(
+            input_file=str(video_path),
+            output_file=str(output_path),
+            video_filters=f"ass='{normalized_ass}'",
+            audio_codec='copy',
+            extra_output_args=['-movflags', '+faststart']
+        )
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced empty output")
@@ -2092,43 +2424,14 @@ def add_caption_highlight(
         # Normalize ASS path for FFmpeg (escape colons)
         normalized_ass = str(ass_path).replace('\\', '/').replace(':', '\\:')
 
-        # FFmpeg command with ASS subtitles
-        if GPU_AVAILABLE:
-            logger.info("🎮 Using GPU encoding (NVENC)")
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-vf', f"ass='{normalized_ass}'",
-                '-c:v', 'h264_nvenc',
-                '-preset', 'p4',
-                '-tune', 'hq',
-                '-rc:v', 'vbr',
-                '-cq:v', '23',
-                '-b:v', '0',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'copy',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
-        else:
-            logger.info("💻 Using CPU encoding (libx264)")
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', str(video_path),
-                '-vf', f"ass='{normalized_ass}'",
-                '-c:v', 'libx264',
-                '-preset', 'medium',
-                '-crf', '23',
-                '-maxrate', '10M',
-                '-bufsize', '20M',
-                '-c:a', 'copy',
-                '-movflags', '+faststart',
-                str(output_path)
-            ]
-
-        logger.info(f"Running FFmpeg: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # FFmpeg with automatic GPU/CPU fallback
+        run_ffmpeg_with_fallback(
+            input_file=str(video_path),
+            output_file=str(output_path),
+            video_filters=f"ass='{normalized_ass}'",
+            audio_codec='copy',
+            extra_output_args=['-movflags', '+faststart']
+        )
 
         if not output_path.exists() or output_path.stat().st_size == 0:
             raise RuntimeError("FFmpeg produced empty output")
