@@ -299,6 +299,54 @@ export class LocalAudioProcessor {
   }
 
   /**
+   * Analyze audio volume using FFmpeg volumedetect filter
+   * Returns mean volume in dB
+   */
+  private async analyzeAudioVolume(filePath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      const ffmpeg = spawn('ffmpeg', [
+        '-i', filePath,
+        '-af', 'volumedetect',
+        '-f', 'null',
+        '-'
+      ]);
+
+      let stderr = '';
+      ffmpeg.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      ffmpeg.on('close', (code) => {
+        if (code === 0 || code === 1) { // ffmpeg returns 1 for null output, which is normal
+          // Extract mean_volume from stderr
+          // Format: [Parsed_volumedetect_0 @ 0x...] mean_volume: -19.5 dB
+          const meanVolumeMatch = stderr.match(/mean_volume:\s*([-\d.]+)\s*dB/);
+
+          if (meanVolumeMatch && meanVolumeMatch[1]) {
+            const meanVolume = parseFloat(meanVolumeMatch[1]);
+            logger.info('[LocalAudioProcessor] Audio volume analyzed', {
+              file: filePath,
+              meanVolume: `${meanVolume.toFixed(2)} dB`
+            });
+            resolve(meanVolume);
+          } else {
+            logger.warn('[LocalAudioProcessor] Could not parse volume from ffmpeg output', {
+              stderr: stderr.slice(-500)
+            });
+            reject(new Error('Could not extract mean_volume from ffmpeg output'));
+          }
+        } else {
+          reject(new Error(`ffmpeg volumedetect failed with code ${code}`));
+        }
+      });
+
+      ffmpeg.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }
+
+  /**
    * Mix audio with trilha sonora (background music)
    * Trilha is automatically looped to match audio duration and reduced by specified dB
    */
@@ -347,18 +395,40 @@ export class LocalAudioProcessor {
 
       logger.info('[LocalAudioProcessor] Audio files downloaded');
 
-      // Step 2: Get durations
-      const [audioDuration, trilhaDuration] = await Promise.all([
+      // Step 2: Analyze volumes and get durations
+      const [audioDuration, trilhaDuration, audioVolume, trilhaVolume] = await Promise.all([
         this.getAudioDuration(audioPath),
-        this.getAudioDuration(trilhaPath)
+        this.getAudioDuration(trilhaPath),
+        this.analyzeAudioVolume(audioPath),
+        this.analyzeAudioVolume(trilhaPath)
       ]);
 
-      logger.info('[LocalAudioProcessor] Audio durations', {
+      logger.info('[LocalAudioProcessor] Audio analysis complete', {
         audioDuration: audioDuration.toFixed(2),
-        trilhaDuration: trilhaDuration.toFixed(2)
+        trilhaDuration: trilhaDuration.toFixed(2),
+        audioVolume: `${audioVolume.toFixed(2)} dB`,
+        trilhaVolume: `${trilhaVolume.toFixed(2)} dB`
       });
 
-      // Step 3: Calculate loops needed for trilha to match audio duration
+      // Step 3: Calculate volume reduction needed
+      // Goal: trilha should be 24dB BELOW audio
+      // Formula: reduction = trilha_volume - audio_volume + target_offset
+      const targetOffset = 24; // dB difference we want
+      const calculatedReduction = trilhaVolume - audioVolume + targetOffset;
+
+      // Use manual override if provided, otherwise use calculated value
+      const finalReduction = volumeReductionDb || calculatedReduction;
+
+      logger.info('[LocalAudioProcessor] Volume reduction calculated', {
+        audioVolume: `${audioVolume.toFixed(2)} dB`,
+        trilhaVolume: `${trilhaVolume.toFixed(2)} dB`,
+        targetOffset: `${targetOffset} dB`,
+        calculatedReduction: `${calculatedReduction.toFixed(2)} dB`,
+        manualOverride: volumeReductionDb ? `${volumeReductionDb} dB` : 'none',
+        finalReduction: `${finalReduction.toFixed(2)} dB`
+      });
+
+      // Step 4: Calculate loops needed for trilha to match audio duration
       const loopsNeeded = Math.ceil(audioDuration / trilhaDuration);
 
       logger.info('[LocalAudioProcessor] Trilha loops calculated', {
@@ -366,16 +436,16 @@ export class LocalAudioProcessor {
         totalTrilhaDuration: (loopsNeeded * trilhaDuration).toFixed(2)
       });
 
-      // Step 4: Mix audios using FFmpeg
+      // Step 5: Mix audios using FFmpeg
       // Filter complex:
       // [1:a]aloop=loop=N:size=2e+09[loop] - Loop trilha N times
-      // [loop]volume=-24dB[reduced] - Reduce trilha volume by 24dB
+      // [loop]volume=-XdB[reduced] - Reduce trilha volume to be 24dB below audio
       // [0:a][reduced]amix=inputs=2:duration=first[aout] - Mix audio with reduced trilha
       logger.info('[LocalAudioProcessor] Mixing audios with FFmpeg...');
 
       const filterComplex = [
         `[1:a]aloop=loop=${loopsNeeded}:size=2e+09[loop]`,
-        `[loop]volume=-${volumeReductionDb}dB[reduced]`,
+        `[loop]volume=-${finalReduction.toFixed(2)}dB[reduced]`,
         `[0:a][reduced]amix=inputs=2:duration=first[aout]`
       ].join(';');
 
@@ -460,7 +530,7 @@ export class LocalAudioProcessor {
         audio_duration: audioDuration,
         trilha_duration: trilhaDuration,
         loops_applied: loopsNeeded,
-        volume_reduction_db: volumeReductionDb
+        volume_reduction_db: parseFloat(finalReduction.toFixed(2))
       };
 
     } catch (error: any) {
