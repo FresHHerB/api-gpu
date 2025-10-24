@@ -2370,41 +2370,17 @@ def handler(job: Dict) -> Dict[str, Any]:
                 "message": f"Cyclic concatenation complete: {cycle_info}, {result['total_segments']} segments, sync precision: {result['duration_diff_ms']}ms"
             }
 
+        # Old CPU version - replaced by GPU-accelerated version below
+        # elif operation == 'trilhasonora_cpu':
+        #     url_video = normalize_url(job_input.get('url_video'))
+        #     trilha_sonora_raw = job_input.get('trilha_sonora')
+        #     path = job_input.get('path')
+        #     output_filename = job_input.get('output_filename')
+        #     volume_reduction_db = job_input.get('volume_reduction_db', 18.0)
+        #     ...
+        #     result = add_trilha_sonora(url_video, trilha_sonora, path, output_filename, volume_reduction_db, worker_id)
+
         elif operation == 'trilhasonora':
-            url_video = normalize_url(job_input.get('url_video'))
-            trilha_sonora_raw = job_input.get('trilha_sonora')
-            path = job_input.get('path')
-            output_filename = job_input.get('output_filename')
-            volume_reduction_db = job_input.get('volume_reduction_db', 18.0)
-
-            if not url_video or not trilha_sonora_raw or not path or not output_filename:
-                raise ValueError("Missing required fields: url_video, trilha_sonora, path, output_filename")
-
-            # Handle Google Drive URLs (don't normalize, will be converted during download)
-            if 'drive.google.com' in trilha_sonora_raw:
-                trilha_sonora = trilha_sonora_raw
-                logger.info("🎵 Google Drive URL detected for trilha sonora")
-            else:
-                trilha_sonora = normalize_url(trilha_sonora_raw)
-
-            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
-            logger.info(f"🎵 Adding trilha sonora with volume reduction: -{volume_reduction_db}dB")
-
-            result = add_trilha_sonora(url_video, trilha_sonora, path, output_filename, volume_reduction_db, worker_id)
-
-            return {
-                "success": True,
-                "video_url": result['video_url'],
-                "filename": result['filename'],
-                "s3_key": result['s3_key'],
-                "video_duration": result['video_duration'],
-                "trilha_duration": result['trilha_duration'],
-                "loops_applied": result['loops_applied'],
-                "volume_reduction_db": result['volume_reduction_db'],
-                "message": f"Trilha sonora added successfully ({result['loops_applied']} loops, -{result['volume_reduction_db']}dB)"
-            }
-
-        elif operation == 'trilhasonora_gpu':
             url_video = normalize_url(job_input.get('url_video'))
             trilha_sonora_raw = job_input.get('trilha_sonora')
             path = job_input.get('path')

@@ -319,8 +319,7 @@ export type JobOperation =
   | 'caption_highlight'
   | 'concatenate'
   | 'concat_video_audio'
-  | 'trilhasonora'
-  | 'trilhasonora_gpu'
+  | 'trilhasonora'  // GPU-accelerated with NVENC (default)
   // VPS (local CPU-based) operations
   | 'img2vid_vps'
   | 'caption_segments_vps'

@@ -79,7 +79,7 @@ const authenticateApiKey = (req: Request, res: Response, next: Function): void =
 
 // ============================================
 // POST /runpod/video/trilhasonora
-// Add background music (trilha sonora) to video
+// Add background music (trilha sonora) with GPU acceleration (NVENC)
 // ============================================
 
 router.post('/runpod/video/trilhasonora', authenticateApiKey, async (req: Request, res: Response) => {
@@ -97,70 +97,7 @@ router.post('/runpod/video/trilhasonora', authenticateApiKey, async (req: Reques
     const { webhook_url, id_roteiro, url_video, trilha_sonora, path, output_filename, volume_reduction_db } = value;
     const pathRaiz = extractPathRaiz(path);
 
-    logger.info('🎵 TrilhaSonora request received', {
-      urlVideo: url_video,
-      trilhaSonora: trilha_sonora,
-      idRoteiro: id_roteiro,
-      webhookUrl: webhook_url,
-      path,
-      pathRaiz,
-      volumeReduction: volume_reduction_db || 'auto-normalize',
-      ip: req.ip
-    });
-
-    // Create job data
-    const jobData = {
-      url_video,
-      trilha_sonora,
-      path,
-      output_filename,
-      volume_reduction_db
-    };
-
-    // Create job (processed by RunPod worker)
-    const job = await jobService.createJob('trilhasonora', jobData, webhook_url, id_roteiro, pathRaiz);
-
-    logger.info('✅ TrilhaSonora job created', {
-      jobId: job.jobId,
-      status: job.status,
-      pathRaiz
-    });
-
-    res.status(202).json(job);
-
-  } catch (error) {
-    logger.error('❌ TrilhaSonora job creation failed', {
-      error: error instanceof Error ? error.message : 'Unknown error'
-    });
-
-    res.status(500).json({
-      error: 'Job creation failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-});
-
-// ============================================
-// POST /runpod/video/trilhasonora-gpu
-// Add background music with GPU acceleration (NVENC)
-// ============================================
-
-router.post('/runpod/video/trilhasonora-gpu', authenticateApiKey, async (req: Request, res: Response) => {
-  try {
-    // Validate request (same schema as CPU version)
-    const { error, value } = trilhaSonoraSchema.validate(req.body, { abortEarly: false });
-    if (error) {
-      res.status(400).json({
-        error: 'Validation failed',
-        message: error.details.map(d => d.message).join(', ')
-      });
-      return;
-    }
-
-    const { webhook_url, id_roteiro, url_video, trilha_sonora, path, output_filename, volume_reduction_db } = value;
-    const pathRaiz = extractPathRaiz(path);
-
-    logger.info('🚀 TrilhaSonora GPU request received', {
+    logger.info('🚀 TrilhaSonora request received (GPU-accelerated)', {
       urlVideo: url_video,
       trilhaSonora: trilha_sonora,
       idRoteiro: id_roteiro,
@@ -169,6 +106,7 @@ router.post('/runpod/video/trilhasonora-gpu', authenticateApiKey, async (req: Re
       pathRaiz,
       volumeReduction: volume_reduction_db || 'auto-normalize',
       gpuAccelerated: true,
+      encoder: 'h264_nvenc',
       ip: req.ip
     });
 
@@ -182,9 +120,9 @@ router.post('/runpod/video/trilhasonora-gpu', authenticateApiKey, async (req: Re
     };
 
     // Create job (processed by RunPod GPU worker with NVENC)
-    const job = await jobService.createJob('trilhasonora_gpu', jobData, webhook_url, id_roteiro, pathRaiz);
+    const job = await jobService.createJob('trilhasonora', jobData, webhook_url, id_roteiro, pathRaiz);
 
-    logger.info('✅ TrilhaSonora GPU job created', {
+    logger.info('✅ TrilhaSonora job created', {
       jobId: job.jobId,
       status: job.status,
       pathRaiz,
@@ -194,7 +132,7 @@ router.post('/runpod/video/trilhasonora-gpu', authenticateApiKey, async (req: Re
     res.status(202).json(job);
 
   } catch (error) {
-    logger.error('❌ TrilhaSonora GPU job creation failed', {
+    logger.error('❌ TrilhaSonora job creation failed', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
 
