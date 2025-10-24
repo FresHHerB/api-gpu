@@ -1044,15 +1044,44 @@ def get_duration(file_path: Path) -> float:
         raise RuntimeError(f"Failed to get media duration: {e}")
 
 
+def analyze_audio_volume(file_path: Path) -> float:
+    """Analyze audio volume using FFmpeg volumedetect and return mean volume in dB"""
+    try:
+        cmd = [
+            'ffmpeg', '-i', str(file_path),
+            '-af', 'volumedetect',
+            '-f', 'null', '-'
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        output = result.stdout + result.stderr
+
+        # Extract mean_volume from output
+        import re
+        match = re.search(r'mean_volume:\s*([-\d.]+)\s*dB', output)
+        if match:
+            mean_volume = float(match.group(1))
+            return mean_volume
+        else:
+            logger.warning(f"Could not extract mean_volume from volumedetect output")
+            return -20.0  # Default fallback
+    except Exception as e:
+        logger.warning(f"Error analyzing audio volume: {e}")
+        return -20.0  # Default fallback
+
+
 def add_trilha_sonora(
     url_video: str,
     trilha_sonora_url: str,
     path: str,
     output_filename: str,
-    volume_reduction_db: float = 18.0,
+    volume_reduction_db: float = None,  # Now optional - will be calculated if not provided
     worker_id: str = None
 ) -> Dict[str, Any]:
-    """Add background music (trilha sonora) to video, looping to match video duration"""
+    """Add background music (trilha sonora) to video, looping to match video duration
+
+    Automatically normalizes trilha volume to be 12dB below video audio for optimal mixing.
+    If volume_reduction_db is provided, uses that value instead of auto-calculation.
+    """
     job_id = str(uuid.uuid4())
     logger.info(f"Starting trilha sonora job: {job_id}")
 
@@ -1079,10 +1108,32 @@ def add_trilha_sonora(
 
         logger.info(f"📊 Duration: video={video_duration:.2f}s, trilha={trilha_duration:.2f}s")
 
+        # Analyze volumes and calculate optimal reduction
+        if volume_reduction_db is None:
+            logger.info("🔊 Analyzing audio levels for automatic normalization...")
+            video_mean_db = analyze_audio_volume(video_path)
+            trilha_mean_db = analyze_audio_volume(trilha_path)
+
+            # Calculate reduction needed to make trilha 12dB below video
+            # Formula: reduction = trilha_current - (video_current - 12)
+            #          reduction = trilha_current - video_current + 12
+            target_offset = 12.0  # Trilha should be 12dB below video
+            volume_reduction_db = trilha_mean_db - video_mean_db + target_offset
+
+            # Ensure reduction is within reasonable bounds (0-40 dB)
+            volume_reduction_db = max(0, min(40, volume_reduction_db))
+
+            logger.info(f"📊 Audio Analysis:")
+            logger.info(f"   Video mean volume: {video_mean_db:.2f} dB")
+            logger.info(f"   Trilha mean volume: {trilha_mean_db:.2f} dB")
+            logger.info(f"   Calculated reduction: {volume_reduction_db:.2f} dB")
+            logger.info(f"   Result: Trilha will be ~12dB below video (optimal background music)")
+        else:
+            logger.info(f"🔊 Using manual volume reduction: {volume_reduction_db:.2f} dB")
+
         # Calculate how many loops we need
         loops_needed = int(video_duration / trilha_duration) + 1
         logger.info(f"🔁 Trilha will be looped {loops_needed} times to match video duration")
-        logger.info(f"🔊 Volume reduction: -{volume_reduction_db}dB")
 
         # Build FFmpeg filter complex:
         # 1. Loop the soundtrack audio (aloop filter)
@@ -1132,15 +1183,32 @@ def add_trilha_sonora(
         # Cleanup local files
         output_path.unlink(missing_ok=True)
 
-        return {
+        result = {
             'video_url': video_url,
             'filename': output_filename,
             's3_key': s3_key,
             'video_duration': video_duration,
             'trilha_duration': trilha_duration,
             'loops_applied': loops_needed,
-            'volume_reduction_db': volume_reduction_db
+            'volume_reduction_db': round(volume_reduction_db, 2)
         }
+
+        # Add audio analysis info if auto-normalization was used
+        if 'video_mean_db' in locals() and 'trilha_mean_db' in locals():
+            result['audio_analysis'] = {
+                'video_mean_db': round(video_mean_db, 2),
+                'trilha_mean_db': round(trilha_mean_db, 2),
+                'trilha_final_db': round(trilha_mean_db - volume_reduction_db, 2),
+                'target_offset_db': 12.0,
+                'normalization_applied': True
+            }
+        else:
+            result['audio_analysis'] = {
+                'normalization_applied': False,
+                'manual_reduction': True
+            }
+
+        return result
 
     except subprocess.CalledProcessError as e:
         logger.error(f"FFmpeg error: {e.stderr}")

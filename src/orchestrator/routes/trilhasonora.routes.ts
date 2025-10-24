@@ -50,7 +50,7 @@ const trilhaSonoraSchema = Joi.object({
   trilha_sonora: Joi.string().required(),
   path: Joi.string().required(),
   output_filename: Joi.string().required(),
-  volume_reduction_db: Joi.number().min(0).max(30).default(18)  // Default: reduce soundtrack by 18dB
+  volume_reduction_db: Joi.number().min(0).max(40).optional()  // Optional: auto-normalizes to -12dB if not provided
 });
 
 // ============================================
@@ -104,7 +104,7 @@ router.post('/runpod/video/trilhasonora', authenticateApiKey, async (req: Reques
       webhookUrl: webhook_url,
       path,
       pathRaiz,
-      volumeReduction: volume_reduction_db,
+      volumeReduction: volume_reduction_db || 'auto-normalize',
       ip: req.ip
     });
 

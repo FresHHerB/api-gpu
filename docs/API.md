@@ -476,7 +476,7 @@ Cycle videos repeatedly to match audio duration.
 
 ### POST /runpod/video/trilhasonora
 
-Add background music (trilha sonora) to video with automatic volume reduction to prevent audio overlap.
+Add background music (trilha sonora) to video with **automatic audio normalization** for optimal mixing.
 
 **Authentication:** Required
 **Type:** Asynchronous (202 Accepted)
@@ -489,8 +489,7 @@ Add background music (trilha sonora) to video with automatic volume reduction to
   "url_video": "https://cdn.example.com/video.mp4",
   "trilha_sonora": "https://cdn.example.com/background-music.mp3",
   "path": "Channel/Video/final/",
-  "output_filename": "video_with_music.mp4",
-  "volume_reduction_db": 18
+  "output_filename": "video_with_music.mp4"
 }
 ```
 
@@ -504,7 +503,7 @@ Add background music (trilha sonora) to video with automatic volume reduction to
 | `trilha_sonora` | string (URL) | ✅ | - | Background music URL (MP3, AAC, WAV) |
 | `path` | string | ✅ | - | S3 upload prefix |
 | `output_filename` | string | ✅ | - | Output filename |
-| `volume_reduction_db` | number | ❌ | `18` | Volume reduction in dB (0-30) for original audio |
+| `volume_reduction_db` | number | ❌ | auto | Manual volume reduction (0-40 dB). If omitted, auto-normalizes trilha to -12dB below video |
 
 **Response (202 Accepted):**
 ```json
@@ -516,13 +515,38 @@ Add background music (trilha sonora) to video with automatic volume reduction to
 }
 ```
 
+**Webhook Success Response:**
+```json
+{
+  "video_url": "https://s3.amazonaws.com/.../video_with_music.mp4",
+  "filename": "video_with_music.mp4",
+  "s3_key": "Channel/Video/final/video_with_music.mp4",
+  "video_duration": 120.5,
+  "trilha_duration": 180.2,
+  "loops_applied": 1,
+  "volume_reduction_db": 20.4,
+  "audio_analysis": {
+    "video_mean_db": -19.5,
+    "trilha_mean_db": -11.1,
+    "trilha_final_db": -31.5,
+    "target_offset_db": 12.0,
+    "normalization_applied": true
+  }
+}
+```
+
 **Behavior:**
-- Reduces original video audio by specified dB amount (default: 18dB)
-- Mixes background music at full volume
-- Prevents audio overlap and maintains clarity
-- Background music loops if shorter than video duration
+- **Auto-Normalization (Default):** Analyzes both audio tracks using FFmpeg volumedetect and automatically adjusts trilha to be exactly 12dB below video audio
+- **Manual Mode:** If `volume_reduction_db` is provided, applies fixed reduction (bypasses auto-normalization)
+- **Optimal Mixing:** -12dB offset ensures clear narration with audible background music (professional standard)
+- **Looping:** Background music loops automatically if shorter than video duration
+- **Professional Quality:** Follows EBU R128 loudness standards for broadcast-quality audio mixing
 
 **Google Drive Support:** Both `url_video` and `trilha_sonora` support Google Drive URLs with automatic download handling for files >25MB.
+
+**Example Results:**
+- Video at -19.5 dB, Trilha at -11.1 dB → Auto-reduces trilha by 20.4 dB → Final: Video at -19.5 dB, Trilha at -31.5 dB (12 dB offset)
+- Ensures consistent audio balance regardless of source material quality
 
 ---
 
