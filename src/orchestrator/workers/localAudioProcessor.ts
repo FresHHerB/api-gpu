@@ -350,15 +350,13 @@ export class LocalAudioProcessor {
    * Mix audio with trilha sonora (background music)
    * Trilha is automatically looped to match audio duration and reduced to stay dbOffset dB below audio
    * @param dbOffset - Target dB difference between audio and trilha (default: 30)
-   * @param volumeReductionDb - Manual volume reduction override (bypasses automatic calculation)
    */
   async mixAudioWithTrilha(
     audioUrl: string,
     trilhaSonoraUrl: string,
     s3Path: string,
     outputFilename: string = 'audio_with_trilha.mp3',
-    dbOffset: number = 30,
-    volumeReductionDb?: number
+    dbOffset: number = 30
   ): Promise<{
     success: boolean;
     audio_url: string;
@@ -385,8 +383,7 @@ export class LocalAudioProcessor {
         trilhaSonoraUrl,
         s3Path,
         outputFilename,
-        dbOffset,
-        volumeReductionDb: volumeReductionDb || 'auto-calculated'
+        dbOffset
       });
 
       // Step 1: Download audio files
@@ -417,18 +414,13 @@ export class LocalAudioProcessor {
       // Step 3: Calculate volume reduction needed
       // Goal: trilha should be dbOffset dB BELOW audio
       // Formula: reduction = trilha_volume - audio_volume + dbOffset
-      const calculatedReduction = trilhaVolume - audioVolume + dbOffset;
-
-      // Use manual override if provided, otherwise use calculated value
-      const finalReduction = volumeReductionDb || calculatedReduction;
+      const volumeReduction = trilhaVolume - audioVolume + dbOffset;
 
       logger.info('[LocalAudioProcessor] Volume reduction calculated', {
         audioVolume: `${audioVolume.toFixed(2)} dB`,
         trilhaVolume: `${trilhaVolume.toFixed(2)} dB`,
         dbOffset: `${dbOffset} dB`,
-        calculatedReduction: `${calculatedReduction.toFixed(2)} dB`,
-        manualOverride: volumeReductionDb ? `${volumeReductionDb} dB` : 'none',
-        finalReduction: `${finalReduction.toFixed(2)} dB`
+        volumeReduction: `${volumeReduction.toFixed(2)} dB`
       });
 
       // Step 4: Calculate loops needed for trilha to match audio duration
@@ -441,14 +433,14 @@ export class LocalAudioProcessor {
 
       // Step 5: Mix audios using FFmpeg
       // Filter complex:
-      // [1:a]aloop=loop=N:size=2e+09[loop] - Loop trilha N times
-      // [loop]volume=-XdB[reduced] - Reduce trilha volume to be 24dB below audio
-      // [0:a][reduced]amix=inputs=2:duration=first[aout] - Mix audio with reduced trilha
+      // [1:a]aloop=loop=N-1:size=2e+09[loop] - Loop trilha N times (loop param is additional repetitions)
+      // [loop]volume=-XdB[reduced] - Reduce trilha volume by calculated dB
+      // [0:a][reduced]amix=inputs=2:duration=first[aout] - Mix audio with reduced trilha (cut to audio duration)
       logger.info('[LocalAudioProcessor] Mixing audios with FFmpeg...');
 
       const filterComplex = [
-        `[1:a]aloop=loop=${loopsNeeded}:size=2e+09[loop]`,
-        `[loop]volume=-${finalReduction.toFixed(2)}dB[reduced]`,
+        `[1:a]aloop=loop=${loopsNeeded - 1}:size=2e+09[loop]`,
+        `[loop]volume=-${volumeReduction.toFixed(2)}dB[reduced]`,
         `[0:a][reduced]amix=inputs=2:duration=first[aout]`
       ].join(';');
 
@@ -533,7 +525,7 @@ export class LocalAudioProcessor {
         audio_duration: audioDuration,
         trilha_duration: trilhaDuration,
         loops_applied: loopsNeeded,
-        volume_reduction_db: parseFloat(finalReduction.toFixed(2))
+        volume_reduction_db: parseFloat(volumeReduction.toFixed(2))
       };
 
     } catch (error: any) {

@@ -65,10 +65,6 @@ const trilhaSonoraSchema = Joi.object({
   db_offset: Joi.number().min(0).max(50).optional().default(30).messages({
     'number.min': 'db_offset must be at least 0',
     'number.max': 'db_offset must be at most 50'
-  }),
-  volume_reduction_db: Joi.number().min(0).max(40).optional().messages({
-    'number.min': 'volume_reduction_db must be at least 0',
-    'number.max': 'volume_reduction_db must be at most 40'
   })
 });
 
@@ -178,15 +174,14 @@ router.post('/vps/audio/trilhasonora', async (req: Request, res: Response) => {
       });
     }
 
-    const { audio_url, trilha_sonora, path, output_filename, db_offset, volume_reduction_db } = value;
+    const { audio_url, trilha_sonora, path, output_filename, db_offset } = value;
 
     logger.info('[VPS Audio] Starting trilha sonora mixing', {
       audio_url,
       trilha_sonora,
       path,
       output_filename,
-      db_offset,
-      volume_reduction_db
+      db_offset
     });
 
     // Process audio mixing (synchronous)
@@ -195,8 +190,7 @@ router.post('/vps/audio/trilhasonora', async (req: Request, res: Response) => {
       trilha_sonora,
       path,
       output_filename,
-      db_offset,
-      volume_reduction_db
+      db_offset
     );
 
     const processingTime = Date.now() - startTime;
