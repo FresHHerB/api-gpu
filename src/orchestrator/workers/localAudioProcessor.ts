@@ -66,10 +66,160 @@ export class LocalAudioProcessor {
   }
 
   /**
+   * Convert Google Drive sharing URL to direct download URL
+   *
+   * Supported formats:
+   * - https://drive.google.com/file/d/FILE_ID/view?usp=drive_link
+   * - https://drive.google.com/file/d/FILE_ID/view
+   * - https://drive.google.com/file/d/FILE_ID/edit
+   * - https://drive.google.com/file/d/FILE_ID
+   * - https://drive.google.com/open?id=FILE_ID
+   *
+   * Returns: https://drive.google.com/uc?export=download&id=FILE_ID
+   */
+  private convertGoogleDriveUrl(url: string): string {
+    if (!url.includes('drive.google.com')) {
+      return url;
+    }
+
+    // Pattern to extract file ID from various Google Drive URL formats
+    const patterns = [
+      /\/file\/d\/([a-zA-Z0-9_-]+)/,  // /file/d/FILE_ID
+      /[?&]id=([a-zA-Z0-9_-]+)/       // ?id=FILE_ID or &id=FILE_ID
+    ];
+
+    for (const pattern of patterns) {
+      const match = url.match(pattern);
+      if (match && match[1]) {
+        const fileId = match[1];
+        const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+        logger.info('[LocalAudioProcessor] Converted Google Drive URL', {
+          fileId,
+          originalUrl: url,
+          directUrl
+        });
+        return directUrl;
+      }
+    }
+
+    logger.warn('[LocalAudioProcessor] Could not extract Google Drive file ID', { url });
+    return url;
+  }
+
+  /**
+   * Download file from Google Drive, handling large files (>25MB)
+   * that require confirmation tokens
+   */
+  private async downloadGoogleDriveFile(url: string, dest: string): Promise<void> {
+    try {
+      // Convert to direct download URL if needed
+      let downloadUrl = url;
+      if (url.includes('drive.google.com') && !url.includes('/uc?')) {
+        downloadUrl = this.convertGoogleDriveUrl(url);
+      }
+
+      logger.info('[LocalAudioProcessor] Downloading from Google Drive', {
+        originalUrl: url,
+        downloadUrl,
+        dest
+      });
+
+      // First request - might get HTML page with confirmation for large files
+      const response = await axios({
+        url: downloadUrl,
+        method: 'GET',
+        responseType: 'stream',
+        timeout: 300000, // 5 minutes
+        maxRedirects: 5,
+        validateStatus: (status) => status >= 200 && status < 400
+      });
+
+      const contentType = response.headers['content-type'] || '';
+
+      // Check if we got HTML (confirmation page for large files)
+      if (contentType.includes('text/html')) {
+        logger.info('[LocalAudioProcessor] Large file detected, extracting confirmation token...');
+
+        // Read HTML response to extract confirmation token
+        let htmlContent = '';
+        for await (const chunk of response.data) {
+          htmlContent += chunk.toString();
+        }
+
+        // Extract confirmation token from HTML
+        const confirmMatch = htmlContent.match(/confirm=([^&"']+)/);
+        if (confirmMatch && confirmMatch[1]) {
+          const confirmToken = confirmMatch[1];
+          const confirmedUrl = `${downloadUrl}&confirm=${confirmToken}`;
+
+          logger.info('[LocalAudioProcessor] Retrying with confirmation token', {
+            confirmToken
+          });
+
+          // Retry with confirmation token
+          const confirmedResponse = await axios({
+            url: confirmedUrl,
+            method: 'GET',
+            responseType: 'stream',
+            timeout: 300000,
+            maxRedirects: 5,
+            validateStatus: (status) => status >= 200 && status < 300
+          });
+
+          const writer = require('fs').createWriteStream(dest);
+          confirmedResponse.data.pipe(writer);
+
+          return new Promise((resolve, reject) => {
+            writer.on('finish', () => {
+              logger.info('[LocalAudioProcessor] Google Drive download completed', { dest });
+              resolve();
+            });
+            writer.on('error', (error: any) => {
+              logger.error('[LocalAudioProcessor] Google Drive download failed', { error: error.message });
+              reject(error);
+            });
+          });
+        } else {
+          throw new Error('Large file detected but could not extract confirmation token');
+        }
+      } else {
+        // Direct download (small file)
+        const writer = require('fs').createWriteStream(dest);
+        response.data.pipe(writer);
+
+        return new Promise((resolve, reject) => {
+          writer.on('finish', () => {
+            logger.info('[LocalAudioProcessor] Google Drive download completed', { dest });
+            resolve();
+          });
+          writer.on('error', (error: any) => {
+            logger.error('[LocalAudioProcessor] Google Drive download failed', { error: error.message });
+            reject(error);
+          });
+        });
+      }
+
+    } catch (error: any) {
+      logger.error('[LocalAudioProcessor] Google Drive download error', {
+        url,
+        error: error.message
+      });
+      throw new Error(`Failed to download from Google Drive: ${error.message}`);
+    }
+  }
+
+  /**
    * Download file from URL to local disk
+   * Automatically detects and handles Google Drive URLs
    */
   private async downloadFile(url: string, dest: string): Promise<void> {
     try {
+      // Detect Google Drive URLs and use specialized downloader
+      if (url.includes('drive.google.com')) {
+        logger.info('[LocalAudioProcessor] Google Drive URL detected, using specialized downloader');
+        return await this.downloadGoogleDriveFile(url, dest);
+      }
+
       // For local MinIO URLs, use simple encodeURI (handles spaces without double-encoding)
       // For external URLs, use requote_uri encoding (handles already-encoded URLs)
       const isLocalMinIO = url.includes('minio:') || url.includes('localhost:9000');

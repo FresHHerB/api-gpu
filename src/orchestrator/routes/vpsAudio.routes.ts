@@ -39,12 +39,12 @@ const concatenateAudioSchema = Joi.object({
 });
 
 const trilhaSonoraSchema = Joi.object({
-  audio_url: Joi.string().pattern(/^https?:\/\/.+/).required().messages({
-    'string.pattern.base': 'audio_url must be a valid HTTP/HTTPS URL',
+  audio_url: Joi.string().uri().required().messages({
+    'string.uri': 'audio_url must be a valid URL (HTTP/HTTPS/Google Drive)',
     'any.required': 'audio_url is required'
   }),
-  trilha_sonora: Joi.string().pattern(/^https?:\/\/.+/).required().messages({
-    'string.pattern.base': 'trilha_sonora must be a valid HTTP/HTTPS URL',
+  trilha_sonora: Joi.string().uri().required().messages({
+    'string.uri': 'trilha_sonora must be a valid URL (HTTP/HTTPS/Google Drive)',
     'any.required': 'trilha_sonora is required'
   }),
   path: Joi.string().required().messages({
