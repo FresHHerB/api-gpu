@@ -38,6 +38,25 @@ const concatenateAudioSchema = Joi.object({
   output_filename: Joi.string().optional().default('audio_concatenated.mp3')
 });
 
+const trilhaSonoraSchema = Joi.object({
+  audio_url: Joi.string().pattern(/^https?:\/\/.+/).required().messages({
+    'string.pattern.base': 'audio_url must be a valid HTTP/HTTPS URL',
+    'any.required': 'audio_url is required'
+  }),
+  trilha_sonora: Joi.string().pattern(/^https?:\/\/.+/).required().messages({
+    'string.pattern.base': 'trilha_sonora must be a valid HTTP/HTTPS URL',
+    'any.required': 'trilha_sonora is required'
+  }),
+  path: Joi.string().required().messages({
+    'string.empty': 'path is required (e.g., "Channel Name/Video Title/audios/")'
+  }),
+  output_filename: Joi.string().optional().default('audio_with_trilha.mp3'),
+  volume_reduction_db: Joi.number().min(0).max(40).optional().default(24).messages({
+    'number.min': 'volume_reduction_db must be at least 0',
+    'number.max': 'volume_reduction_db must be at most 40'
+  })
+});
+
 // ============================================
 // POST /vps/audio/concatenate
 // Concatenate multiple audio files
@@ -112,6 +131,94 @@ router.post('/vps/audio/concatenate', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Audio concatenation failed',
+      message: error.message,
+      processing_time_ms: processingTime
+    });
+  }
+});
+
+// ============================================
+// POST /vps/audio/trilhasonora
+// Mix audio with trilha sonora (background music)
+// Synchronous - returns result immediately (no webhook)
+// ============================================
+
+router.post('/vps/audio/trilhasonora', async (req: Request, res: Response) => {
+  const startTime = Date.now();
+
+  try {
+    // Validate request
+    const { error, value } = trilhaSonoraSchema.validate(req.body);
+
+    if (error) {
+      logger.warn('[VPS Audio] Validation error', {
+        error: error.details[0].message,
+        body: req.body
+      });
+
+      return res.status(400).json({
+        success: false,
+        error: 'Validation error',
+        message: error.details[0].message
+      });
+    }
+
+    const { audio_url, trilha_sonora, path, output_filename, volume_reduction_db } = value;
+
+    logger.info('[VPS Audio] Starting trilha sonora mixing', {
+      audio_url,
+      trilha_sonora,
+      path,
+      output_filename,
+      volume_reduction_db
+    });
+
+    // Process audio mixing (synchronous)
+    const result = await audioProcessor.mixAudioWithTrilha(
+      audio_url,
+      trilha_sonora,
+      path,
+      output_filename,
+      volume_reduction_db
+    );
+
+    const processingTime = Date.now() - startTime;
+
+    logger.info('[VPS Audio] Trilha sonora mixing complete', {
+      audioUrl: result.audio_url,
+      audioDuration: result.audio_duration,
+      trilhaDuration: result.trilha_duration,
+      loopsApplied: result.loops_applied,
+      volumeReduction: result.volume_reduction_db,
+      processingTime: `${(processingTime / 1000).toFixed(2)}s`
+    });
+
+    // Return result immediately
+    return res.status(200).json({
+      success: true,
+      audio_url: result.audio_url,
+      filename: result.filename,
+      s3_key: result.s3_key,
+      audio_duration: result.audio_duration,
+      trilha_duration: result.trilha_duration,
+      loops_applied: result.loops_applied,
+      volume_reduction_db: result.volume_reduction_db,
+      processing_time_ms: processingTime,
+      message: `Audio mixed with trilha sonora (${result.loops_applied} loops, -${result.volume_reduction_db}dB)`
+    });
+
+  } catch (error: any) {
+    const processingTime = Date.now() - startTime;
+
+    logger.error('[VPS Audio] Trilha sonora mixing failed', {
+      error: error.message,
+      stack: error.stack,
+      processingTime: `${(processingTime / 1000).toFixed(2)}s`
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'Audio mixing with trilha sonora failed',
       message: error.message,
       processing_time_ms: processingTime
     });

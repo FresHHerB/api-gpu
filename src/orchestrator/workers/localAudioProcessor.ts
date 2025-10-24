@@ -149,6 +149,191 @@ export class LocalAudioProcessor {
   }
 
   /**
+   * Mix audio with trilha sonora (background music)
+   * Trilha is automatically looped to match audio duration and reduced by specified dB
+   */
+  async mixAudioWithTrilha(
+    audioUrl: string,
+    trilhaSonoraUrl: string,
+    s3Path: string,
+    outputFilename: string = 'audio_with_trilha.mp3',
+    volumeReductionDb: number = 24
+  ): Promise<{
+    success: boolean;
+    audio_url: string;
+    filename: string;
+    s3_key: string;
+    audio_duration: number;
+    trilha_duration: number;
+    loops_applied: number;
+    volume_reduction_db: number;
+  }> {
+    const jobId = randomUUID();
+    const jobWorkDir = path.join(this.workDir, jobId);
+    const audioPath = path.join(jobWorkDir, 'audio.mp3');
+    const trilhaPath = path.join(jobWorkDir, 'trilha.mp3');
+    const outputPath = path.join(jobWorkDir, outputFilename);
+
+    try {
+      // Create job work directory
+      await fs.mkdir(jobWorkDir, { recursive: true });
+
+      logger.info('[LocalAudioProcessor] Starting audio mixing with trilha sonora', {
+        jobId,
+        audioUrl,
+        trilhaSonoraUrl,
+        s3Path,
+        outputFilename,
+        volumeReductionDb
+      });
+
+      // Step 1: Download audio files
+      logger.info('[LocalAudioProcessor] Downloading audio files...');
+
+      await Promise.all([
+        this.downloadFile(audioUrl, audioPath),
+        this.downloadFile(trilhaSonoraUrl, trilhaPath)
+      ]);
+
+      logger.info('[LocalAudioProcessor] Audio files downloaded');
+
+      // Step 2: Get durations
+      const [audioDuration, trilhaDuration] = await Promise.all([
+        this.getAudioDuration(audioPath),
+        this.getAudioDuration(trilhaPath)
+      ]);
+
+      logger.info('[LocalAudioProcessor] Audio durations', {
+        audioDuration: audioDuration.toFixed(2),
+        trilhaDuration: trilhaDuration.toFixed(2)
+      });
+
+      // Step 3: Calculate loops needed for trilha to match audio duration
+      const loopsNeeded = Math.ceil(audioDuration / trilhaDuration);
+
+      logger.info('[LocalAudioProcessor] Trilha loops calculated', {
+        loopsNeeded,
+        totalTrilhaDuration: (loopsNeeded * trilhaDuration).toFixed(2)
+      });
+
+      // Step 4: Mix audios using FFmpeg
+      // Filter complex:
+      // [1:a]aloop=loop=N:size=2e+09[loop] - Loop trilha N times
+      // [loop]volume=-24dB[reduced] - Reduce trilha volume by 24dB
+      // [0:a][reduced]amix=inputs=2:duration=first[aout] - Mix audio with reduced trilha
+      logger.info('[LocalAudioProcessor] Mixing audios with FFmpeg...');
+
+      const filterComplex = [
+        `[1:a]aloop=loop=${loopsNeeded}:size=2e+09[loop]`,
+        `[loop]volume=-${volumeReductionDb}dB[reduced]`,
+        `[0:a][reduced]amix=inputs=2:duration=first[aout]`
+      ].join(';');
+
+      await new Promise<void>((resolve, reject) => {
+        const ffmpeg = spawn('ffmpeg', [
+          '-y', // Overwrite output
+          '-i', audioPath,
+          '-i', trilhaPath,
+          '-filter_complex', filterComplex,
+          '-map', '[aout]',
+          '-c:a', 'libmp3lame',
+          '-b:a', '192k',
+          outputPath
+        ]);
+
+        let stderrOutput = '';
+
+        ffmpeg.stderr.on('data', (data) => {
+          stderrOutput += data.toString();
+        });
+
+        ffmpeg.on('close', (code) => {
+          if (code === 0) {
+            logger.info('[LocalAudioProcessor] FFmpeg mixing complete', {
+              outputPath
+            });
+            resolve();
+          } else {
+            logger.error('[LocalAudioProcessor] FFmpeg failed', {
+              code,
+              stderr: stderrOutput.slice(-500) // Last 500 chars
+            });
+            reject(new Error(`FFmpeg failed with code ${code}`));
+          }
+        });
+
+        ffmpeg.on('error', (error) => {
+          logger.error('[LocalAudioProcessor] FFmpeg spawn error', {
+            error: error.message
+          });
+          reject(error);
+        });
+      });
+
+      logger.info('[LocalAudioProcessor] Audio mixing complete');
+
+      // Step 5: Upload to S3/MinIO
+      logger.info('[LocalAudioProcessor] Uploading to S3...', {
+        bucket: process.env.S3_BUCKET_NAME,
+        path: s3Path,
+        filename: outputFilename
+      });
+
+      // Read audio file as Buffer
+      const audioBuffer = await fs.readFile(outputPath);
+
+      // Upload to S3 (returns public URL directly)
+      const audioUrlResult = await this.s3Service.uploadFile(
+        s3Path,
+        outputFilename,
+        audioBuffer,
+        'audio/mpeg'
+      );
+
+      // Extract S3 key from URL for response
+      const s3Key = `${s3Path}${outputFilename}`;
+
+      logger.info('[LocalAudioProcessor] Upload complete', {
+        s3Key,
+        audioUrl: audioUrlResult
+      });
+
+      // Step 6: Cleanup
+      logger.info('[LocalAudioProcessor] Cleaning up temporary files...');
+      await fs.rm(jobWorkDir, { recursive: true, force: true });
+
+      return {
+        success: true,
+        audio_url: audioUrlResult,
+        filename: outputFilename,
+        s3_key: s3Key,
+        audio_duration: audioDuration,
+        trilha_duration: trilhaDuration,
+        loops_applied: loopsNeeded,
+        volume_reduction_db: volumeReductionDb
+      };
+
+    } catch (error: any) {
+      logger.error('[LocalAudioProcessor] Audio mixing failed', {
+        jobId,
+        error: error.message,
+        stack: error.stack
+      });
+
+      // Cleanup on error
+      try {
+        await fs.rm(jobWorkDir, { recursive: true, force: true });
+      } catch (cleanupError: any) {
+        logger.warn('[LocalAudioProcessor] Cleanup failed', {
+          error: cleanupError.message
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  /**
    * Concatenate audio files using FFmpeg concat demuxer
    * This is the fastest method for concatenating audio without re-encoding
    */
