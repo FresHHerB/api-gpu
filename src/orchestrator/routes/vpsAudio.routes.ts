@@ -62,7 +62,7 @@ const trilhaSonoraSchema = Joi.object({
     'string.empty': 'path is required (e.g., "Channel Name/Video Title/audios/")'
   }),
   output_filename: Joi.string().optional().default('audio_with_trilha.mp3'),
-  volume_reduction_db: Joi.number().min(0).max(40).optional().default(24).messages({
+  volume_reduction_db: Joi.number().min(0).max(40).optional().default(30).messages({
     'number.min': 'volume_reduction_db must be at least 0',
     'number.max': 'volume_reduction_db must be at most 40'
   })

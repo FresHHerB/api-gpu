@@ -411,9 +411,9 @@ export class LocalAudioProcessor {
       });
 
       // Step 3: Calculate volume reduction needed
-      // Goal: trilha should be 24dB BELOW audio
+      // Goal: trilha should be 30dB BELOW audio
       // Formula: reduction = trilha_volume - audio_volume + target_offset
-      const targetOffset = 24; // dB difference we want
+      const targetOffset = 30; // dB difference we want
       const calculatedReduction = trilhaVolume - audioVolume + targetOffset;
 
       // Use manual override if provided, otherwise use calculated value
