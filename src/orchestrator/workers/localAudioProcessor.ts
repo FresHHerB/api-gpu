@@ -348,14 +348,17 @@ export class LocalAudioProcessor {
 
   /**
    * Mix audio with trilha sonora (background music)
-   * Trilha is automatically looped to match audio duration and reduced by specified dB
+   * Trilha is automatically looped to match audio duration and reduced to stay dbOffset dB below audio
+   * @param dbOffset - Target dB difference between audio and trilha (default: 30)
+   * @param volumeReductionDb - Manual volume reduction override (bypasses automatic calculation)
    */
   async mixAudioWithTrilha(
     audioUrl: string,
     trilhaSonoraUrl: string,
     s3Path: string,
     outputFilename: string = 'audio_with_trilha.mp3',
-    volumeReductionDb: number = 24
+    dbOffset: number = 30,
+    volumeReductionDb?: number
   ): Promise<{
     success: boolean;
     audio_url: string;
@@ -382,7 +385,8 @@ export class LocalAudioProcessor {
         trilhaSonoraUrl,
         s3Path,
         outputFilename,
-        volumeReductionDb
+        dbOffset,
+        volumeReductionDb: volumeReductionDb || 'auto-calculated'
       });
 
       // Step 1: Download audio files
@@ -411,10 +415,9 @@ export class LocalAudioProcessor {
       });
 
       // Step 3: Calculate volume reduction needed
-      // Goal: trilha should be 30dB BELOW audio
-      // Formula: reduction = trilha_volume - audio_volume + target_offset
-      const targetOffset = 30; // dB difference we want
-      const calculatedReduction = trilhaVolume - audioVolume + targetOffset;
+      // Goal: trilha should be dbOffset dB BELOW audio
+      // Formula: reduction = trilha_volume - audio_volume + dbOffset
+      const calculatedReduction = trilhaVolume - audioVolume + dbOffset;
 
       // Use manual override if provided, otherwise use calculated value
       const finalReduction = volumeReductionDb || calculatedReduction;
@@ -422,7 +425,7 @@ export class LocalAudioProcessor {
       logger.info('[LocalAudioProcessor] Volume reduction calculated', {
         audioVolume: `${audioVolume.toFixed(2)} dB`,
         trilhaVolume: `${trilhaVolume.toFixed(2)} dB`,
-        targetOffset: `${targetOffset} dB`,
+        dbOffset: `${dbOffset} dB`,
         calculatedReduction: `${calculatedReduction.toFixed(2)} dB`,
         manualOverride: volumeReductionDb ? `${volumeReductionDb} dB` : 'none',
         finalReduction: `${finalReduction.toFixed(2)} dB`
