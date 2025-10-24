@@ -38,13 +38,24 @@ const concatenateAudioSchema = Joi.object({
   output_filename: Joi.string().optional().default('audio_concatenated.mp3')
 });
 
+// Custom URL validator that accepts URLs with spaces (will be encoded during download)
+const urlValidator = (value: string, helpers: Joi.CustomHelpers) => {
+  // Check if it looks like a URL (http:// or https://)
+  if (!value.match(/^https?:\/\/.+/)) {
+    return helpers.error('any.invalid', {
+      message: 'URL must start with http:// or https://'
+    });
+  }
+  return value;
+};
+
 const trilhaSonoraSchema = Joi.object({
-  audio_url: Joi.string().uri().required().messages({
-    'string.uri': 'audio_url must be a valid URL (HTTP/HTTPS/Google Drive)',
+  audio_url: Joi.string().custom(urlValidator).required().messages({
+    'any.invalid': 'audio_url must be a valid URL (HTTP/HTTPS/Google Drive)',
     'any.required': 'audio_url is required'
   }),
-  trilha_sonora: Joi.string().uri().required().messages({
-    'string.uri': 'trilha_sonora must be a valid URL (HTTP/HTTPS/Google Drive)',
+  trilha_sonora: Joi.string().custom(urlValidator).required().messages({
+    'any.invalid': 'trilha_sonora must be a valid URL (HTTP/HTTPS/Google Drive)',
     'any.required': 'trilha_sonora is required'
   }),
   path: Joi.string().required().messages({
