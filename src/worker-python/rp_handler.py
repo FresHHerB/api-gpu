@@ -1114,10 +1114,10 @@ def add_trilha_sonora(
             video_mean_db = analyze_audio_volume(video_path)
             trilha_mean_db = analyze_audio_volume(trilha_path)
 
-            # Calculate reduction needed to make trilha 12dB below video
-            # Formula: reduction = trilha_current - (video_current - 12)
-            #          reduction = trilha_current - video_current + 12
-            target_offset = 12.0  # Trilha should be 12dB below video
+            # Calculate reduction needed to make trilha 20dB below video
+            # Formula: reduction = trilha_current - (video_current - 20)
+            #          reduction = trilha_current - video_current + 20
+            target_offset = 20.0  # Trilha should be 20dB below video
             volume_reduction_db = trilha_mean_db - video_mean_db + target_offset
 
             # Ensure reduction is within reasonable bounds (0-40 dB)
@@ -1127,7 +1127,7 @@ def add_trilha_sonora(
             logger.info(f"   Video mean volume: {video_mean_db:.2f} dB")
             logger.info(f"   Trilha mean volume: {trilha_mean_db:.2f} dB")
             logger.info(f"   Calculated reduction: {volume_reduction_db:.2f} dB")
-            logger.info(f"   Result: Trilha will be ~12dB below video (optimal background music)")
+            logger.info(f"   Result: Trilha will be ~20dB below video (subtle background music)")
         else:
             logger.info(f"🔊 Using manual volume reduction: {volume_reduction_db:.2f} dB")
 
@@ -1199,7 +1199,7 @@ def add_trilha_sonora(
                 'video_mean_db': round(video_mean_db, 2),
                 'trilha_mean_db': round(trilha_mean_db, 2),
                 'trilha_final_db': round(trilha_mean_db - volume_reduction_db, 2),
-                'target_offset_db': 12.0,
+                'target_offset_db': 20.0,
                 'normalization_applied': True
             }
         else:

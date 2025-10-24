@@ -503,7 +503,7 @@ Add background music (trilha sonora) to video with **automatic audio normalizati
 | `trilha_sonora` | string (URL) | ✅ | - | Background music URL (MP3, AAC, WAV) |
 | `path` | string | ✅ | - | S3 upload prefix |
 | `output_filename` | string | ✅ | - | Output filename |
-| `volume_reduction_db` | number | ❌ | auto | Manual volume reduction (0-40 dB). If omitted, auto-normalizes trilha to -12dB below video |
+| `volume_reduction_db` | number | ❌ | auto | Manual volume reduction (0-40 dB). If omitted, auto-normalizes trilha to -20dB below video |
 
 **Response (202 Accepted):**
 ```json
@@ -528,24 +528,24 @@ Add background music (trilha sonora) to video with **automatic audio normalizati
   "audio_analysis": {
     "video_mean_db": -19.5,
     "trilha_mean_db": -11.1,
-    "trilha_final_db": -31.5,
-    "target_offset_db": 12.0,
+    "trilha_final_db": -39.5,
+    "target_offset_db": 20.0,
     "normalization_applied": true
   }
 }
 ```
 
 **Behavior:**
-- **Auto-Normalization (Default):** Analyzes both audio tracks using FFmpeg volumedetect and automatically adjusts trilha to be exactly 12dB below video audio
+- **Auto-Normalization (Default):** Analyzes both audio tracks using FFmpeg volumedetect and automatically adjusts trilha to be exactly 20dB below video audio
 - **Manual Mode:** If `volume_reduction_db` is provided, applies fixed reduction (bypasses auto-normalization)
-- **Optimal Mixing:** -12dB offset ensures clear narration with audible background music (professional standard)
+- **Optimal Mixing:** -20dB offset ensures clear narration with subtle background music (professional standard for spoken content)
 - **Looping:** Background music loops automatically if shorter than video duration
 - **Professional Quality:** Follows EBU R128 loudness standards for broadcast-quality audio mixing
 
 **Google Drive Support:** Both `url_video` and `trilha_sonora` support Google Drive URLs with automatic download handling for files >25MB.
 
 **Example Results:**
-- Video at -19.5 dB, Trilha at -11.1 dB → Auto-reduces trilha by 20.4 dB → Final: Video at -19.5 dB, Trilha at -31.5 dB (12 dB offset)
+- Video at -19.5 dB, Trilha at -11.1 dB → Auto-reduces trilha by 28.4 dB → Final: Video at -19.5 dB, Trilha at -39.5 dB (20 dB offset)
 - Ensures consistent audio balance regardless of source material quality
 
 ---
