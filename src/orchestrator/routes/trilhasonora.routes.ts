@@ -50,7 +50,7 @@ const trilhaSonoraSchema = Joi.object({
   trilha_sonora: Joi.string().required(),
   path: Joi.string().required(),
   output_filename: Joi.string().required(),
-  volume_reduction_db: Joi.number().min(0).max(40).optional()  // Optional: auto-normalizes to -12dB if not provided
+  volume_reduction_db: Joi.number().min(0).max(40).optional()  // Optional: auto-normalizes to -20dB if not provided
 });
 
 // ============================================
@@ -130,6 +130,71 @@ router.post('/runpod/video/trilhasonora', authenticateApiKey, async (req: Reques
 
   } catch (error) {
     logger.error('❌ TrilhaSonora job creation failed', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+
+    res.status(500).json({
+      error: 'Job creation failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// ============================================
+// POST /runpod/video/trilhasonora-gpu
+// Add background music with GPU acceleration (NVENC)
+// ============================================
+
+router.post('/runpod/video/trilhasonora-gpu', authenticateApiKey, async (req: Request, res: Response) => {
+  try {
+    // Validate request (same schema as CPU version)
+    const { error, value } = trilhaSonoraSchema.validate(req.body, { abortEarly: false });
+    if (error) {
+      res.status(400).json({
+        error: 'Validation failed',
+        message: error.details.map(d => d.message).join(', ')
+      });
+      return;
+    }
+
+    const { webhook_url, id_roteiro, url_video, trilha_sonora, path, output_filename, volume_reduction_db } = value;
+    const pathRaiz = extractPathRaiz(path);
+
+    logger.info('🚀 TrilhaSonora GPU request received', {
+      urlVideo: url_video,
+      trilhaSonora: trilha_sonora,
+      idRoteiro: id_roteiro,
+      webhookUrl: webhook_url,
+      path,
+      pathRaiz,
+      volumeReduction: volume_reduction_db || 'auto-normalize',
+      gpuAccelerated: true,
+      ip: req.ip
+    });
+
+    // Create job data
+    const jobData = {
+      url_video,
+      trilha_sonora,
+      path,
+      output_filename,
+      volume_reduction_db
+    };
+
+    // Create job (processed by RunPod GPU worker with NVENC)
+    const job = await jobService.createJob('trilhasonora_gpu', jobData, webhook_url, id_roteiro, pathRaiz);
+
+    logger.info('✅ TrilhaSonora GPU job created', {
+      jobId: job.jobId,
+      status: job.status,
+      pathRaiz,
+      encoder: 'h264_nvenc'
+    });
+
+    res.status(202).json(job);
+
+  } catch (error) {
+    logger.error('❌ TrilhaSonora GPU job creation failed', {
       error: error instanceof Error ? error.message : 'Unknown error'
     });
 

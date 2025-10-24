@@ -1219,6 +1219,159 @@ def add_trilha_sonora(
         trilha_path.unlink(missing_ok=True)
 
 
+def add_trilha_sonora_gpu(
+    url_video: str,
+    trilha_sonora_url: str,
+    path: str,
+    output_filename: str,
+    volume_reduction_db: float = None,
+    worker_id: str = None
+) -> Dict[str, Any]:
+    """Add background music (trilha sonora) to video with GPU-accelerated encoding (NVENC)
+
+    Automatically normalizes trilha volume to be 20dB below video audio for optimal mixing.
+    Uses h264_nvenc for 3-4x faster encoding compared to CPU version.
+    If volume_reduction_db is provided, uses that value instead of auto-calculation.
+    """
+    job_id = str(uuid.uuid4())
+    logger.info(f"Starting GPU trilha sonora job: {job_id}")
+
+    video_path = WORK_DIR / f"{job_id}_video.mp4"
+    trilha_path = WORK_DIR / f"{job_id}_trilha.mp3"
+    output_path = OUTPUT_DIR / output_filename
+
+    try:
+        # Download video and soundtrack
+        logger.info(f"📥 Downloading video from: {url_video}")
+        download_file(url_video, video_path)
+
+        # Download trilha sonora (use specialized Google Drive downloader if needed)
+        logger.info(f"📥 Downloading trilha sonora from: {trilha_sonora_url}")
+        if 'drive.google.com' in trilha_sonora_url:
+            logger.info("🎵 Using Google Drive downloader for trilha sonora")
+            download_google_drive_file(trilha_sonora_url, trilha_path)
+        else:
+            download_file(trilha_sonora_url, trilha_path)
+
+        # Get durations
+        video_duration = get_duration(video_path)
+        trilha_duration = get_duration(trilha_path)
+
+        logger.info(f"📊 Duration: video={video_duration:.2f}s, trilha={trilha_duration:.2f}s")
+
+        # Analyze volumes and calculate optimal reduction
+        if volume_reduction_db is None:
+            logger.info("🔊 Analyzing audio levels for automatic normalization...")
+            video_mean_db = analyze_audio_volume(video_path)
+            trilha_mean_db = analyze_audio_volume(trilha_path)
+
+            # Calculate reduction needed to make trilha 20dB below video
+            target_offset = 20.0
+            volume_reduction_db = trilha_mean_db - video_mean_db + target_offset
+
+            # Ensure reduction is within reasonable bounds (0-40 dB)
+            volume_reduction_db = max(0, min(40, volume_reduction_db))
+
+            logger.info(f"📊 Audio Analysis:")
+            logger.info(f"   Video mean volume: {video_mean_db:.2f} dB")
+            logger.info(f"   Trilha mean volume: {trilha_mean_db:.2f} dB")
+            logger.info(f"   Calculated reduction: {volume_reduction_db:.2f} dB")
+            logger.info(f"   Result: Trilha will be ~20dB below video (subtle background music)")
+        else:
+            logger.info(f"🔊 Using manual volume reduction: {volume_reduction_db:.2f} dB")
+
+        # Calculate how many loops we need
+        loops_needed = int(video_duration / trilha_duration) + 1
+        logger.info(f"🔁 Trilha will be looped {loops_needed} times to match video duration")
+
+        # Build FFmpeg filter complex (same audio processing as CPU version)
+        filter_complex = (
+            f"[1:a]aloop=loop={loops_needed}:size=2e+09[loop];"
+            f"[loop]volume=-{volume_reduction_db}dB[reduced];"
+            f"[0:a][reduced]amix=inputs=2:duration=first[aout]"
+        )
+
+        # FFmpeg command - Use GPU encoding (NVENC)
+        logger.info("🚀 Using GPU encoding (h264_nvenc) - NVIDIA Hardware Acceleration")
+        cmd = [
+            'ffmpeg', '-y',
+            '-hwaccel', 'cuda',           # Enable CUDA hardware acceleration
+            '-hwaccel_output_format', 'cuda',  # Keep frames in GPU memory
+            '-i', str(video_path),        # Input 0: video
+            '-i', str(trilha_path),       # Input 1: trilha sonora
+            '-filter_complex', filter_complex,
+            '-map', '0:v',                # Map video from input 0
+            '-map', '[aout]',             # Map mixed audio
+            '-c:v', 'h264_nvenc',         # NVIDIA GPU encoder
+            '-preset', 'p4',              # Preset 4 (medium - balance quality/speed)
+            '-tune', 'hq',                # High quality tuning
+            '-rc', 'vbr',                 # Variable bitrate
+            '-cq', '23',                  # Constant quality (like CRF)
+            '-b:v', '5M',                 # Target bitrate
+            '-maxrate', '10M',            # Max bitrate
+            '-bufsize', '20M',            # Buffer size
+            '-profile:v', 'high',         # H.264 High profile
+            '-c:a', 'aac',                # Audio codec
+            '-b:a', '192k',               # Audio bitrate
+            '-shortest',                  # Cut to shortest stream
+            '-movflags', '+faststart',    # Fast start for streaming
+            str(output_path)
+        ]
+
+        logger.info(f"Running FFmpeg with NVENC: {' '.join(cmd[:20])}...")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("FFmpeg produced empty output")
+
+        file_size_mb = output_path.stat().st_size / (1024 * 1024)
+        logger.info(f"✅ GPU Trilha sonora added: {output_filename} ({file_size_mb:.2f} MB)")
+
+        # Upload to S3
+        s3_key = f"{path}{output_filename}"
+        video_url = upload_to_s3(output_path, S3_BUCKET_NAME, s3_key)
+
+        # Cleanup local files
+        output_path.unlink(missing_ok=True)
+
+        result = {
+            'video_url': video_url,
+            'filename': output_filename,
+            's3_key': s3_key,
+            'video_duration': video_duration,
+            'trilha_duration': trilha_duration,
+            'loops_applied': loops_needed,
+            'volume_reduction_db': round(volume_reduction_db, 2),
+            'gpu_accelerated': True,
+            'encoder': 'h264_nvenc'
+        }
+
+        # Add audio analysis info if auto-normalization was used
+        if 'video_mean_db' in locals() and 'trilha_mean_db' in locals():
+            result['audio_analysis'] = {
+                'video_mean_db': round(video_mean_db, 2),
+                'trilha_mean_db': round(trilha_mean_db, 2),
+                'trilha_final_db': round(trilha_mean_db - volume_reduction_db, 2),
+                'target_offset_db': 20.0,
+                'normalization_applied': True
+            }
+        else:
+            result['audio_analysis'] = {
+                'normalization_applied': False,
+                'manual_reduction': True
+            }
+
+        return result
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"FFmpeg GPU error: {e.stderr}")
+        raise RuntimeError(f"FFmpeg NVENC failed: {e.stderr}")
+    finally:
+        # Cleanup input files
+        video_path.unlink(missing_ok=True)
+        trilha_path.unlink(missing_ok=True)
+
+
 def add_audio(
     url_video: str,
     url_audio: str,
@@ -2249,6 +2402,46 @@ def handler(job: Dict) -> Dict[str, Any]:
                 "loops_applied": result['loops_applied'],
                 "volume_reduction_db": result['volume_reduction_db'],
                 "message": f"Trilha sonora added successfully ({result['loops_applied']} loops, -{result['volume_reduction_db']}dB)"
+            }
+
+        elif operation == 'trilhasonora_gpu':
+            url_video = normalize_url(job_input.get('url_video'))
+            trilha_sonora_raw = job_input.get('trilha_sonora')
+            path = job_input.get('path')
+            output_filename = job_input.get('output_filename')
+            volume_reduction_db = job_input.get('volume_reduction_db')  # None = auto-normalize
+
+            if not url_video or not trilha_sonora_raw or not path or not output_filename:
+                raise ValueError("Missing required fields: url_video, trilha_sonora, path, output_filename")
+
+            # Handle Google Drive URLs (don't normalize, will be converted during download)
+            if 'drive.google.com' in trilha_sonora_raw:
+                trilha_sonora = trilha_sonora_raw
+                logger.info("🎵 Google Drive URL detected for trilha sonora")
+            else:
+                trilha_sonora = normalize_url(trilha_sonora_raw)
+
+            logger.info(f"📤 S3 upload: bucket={S3_BUCKET_NAME}, path={path}, filename={output_filename}")
+            logger.info(f"🚀 Adding trilha sonora with GPU acceleration (NVENC)")
+            if volume_reduction_db:
+                logger.info(f"🎵 Manual volume reduction: -{volume_reduction_db}dB")
+            else:
+                logger.info(f"🎵 Auto-normalizing trilha to -20dB below video")
+
+            result = add_trilha_sonora_gpu(url_video, trilha_sonora, path, output_filename, volume_reduction_db, worker_id)
+
+            return {
+                "success": True,
+                "video_url": result['video_url'],
+                "filename": result['filename'],
+                "s3_key": result['s3_key'],
+                "video_duration": result['video_duration'],
+                "trilha_duration": result['trilha_duration'],
+                "loops_applied": result['loops_applied'],
+                "volume_reduction_db": result['volume_reduction_db'],
+                "gpu_accelerated": result['gpu_accelerated'],
+                "encoder": result['encoder'],
+                "message": f"Trilha sonora added with GPU acceleration ({result['loops_applied']} loops, -{result['volume_reduction_db']}dB, {result['encoder']})"
             }
 
         else:
