@@ -38,6 +38,7 @@ X_API_KEY=your-secure-api-key
 - [POST /runpod/audio/transcribe](#post-runpodaudiotranscribe) - Faster-Whisper transcription (GPU)
 - [POST /runpod/audio/transcribe-whisper](#post-runpodaudiotranscribe-whisper) - OpenAI Whisper Official (GPU)
 - [POST /vps/audio/concatenate](#post-vpsaudioconcatenate) - Merge audio files (CPU)
+- [POST /vps/audio/trilhasonora](#post-vpsaudiotrilhasonora) - Mix audio with background music (CPU)
 - [GET /vps/audio/health](#get-vpsaudiohealth) - Audio service health
 
 ### Image Generation
@@ -864,6 +865,114 @@ Merge multiple audio files into a single file.
 
 ---
 
+### POST /vps/audio/trilhasonora
+
+Mix audio with background music (trilha sonora) with **automatic volume normalization** based on audio analysis.
+
+**Authentication:** NOT Required
+**Type:** Synchronous (200 OK)
+
+**Request:**
+```json
+{
+  "audio_url": "https://cdn.example.com/narration.mp3",
+  "trilha_sonora": "https://cdn.example.com/background-music.mp3",
+  "path": "Podcast/Season01/Episode01/",
+  "output_filename": "episode_with_music.mp3",
+  "db_offset": 30
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `audio_url` | string (URL) | ✅ | - | Main audio URL (MP3, AAC, WAV, HTTP/HTTPS/Google Drive) |
+| `trilha_sonora` | string (URL) | ✅ | - | Background music URL (MP3, AAC, WAV, HTTP/HTTPS/Google Drive) |
+| `path` | string | ✅ | - | S3 upload prefix (e.g., "Channel/Video/audios/") |
+| `output_filename` | string | ❌ | `"audio_with_trilha.mp3"` | Output filename |
+| `db_offset` | number | ❌ | `30` | Target dB difference between audio and trilha (0-50) |
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "audio_url": "https://s3.example.com/Podcast/Season01/Episode01/episode_with_music.mp3",
+  "filename": "episode_with_music.mp3",
+  "s3_key": "Podcast/Season01/Episode01/episode_with_music.mp3",
+  "audio_duration": 1800.5,
+  "trilha_duration": 180.2,
+  "loops_applied": 10,
+  "volume_reduction_db": 35.2,
+  "processing_time_ms": 8542,
+  "message": "Audio mixed with trilha sonora (10 loops, -35.2dB)"
+}
+```
+
+**How it Works:**
+
+1. **Audio Analysis:** Uses FFmpeg `volumedetect` to measure mean volume of both tracks
+2. **Smart Volume Calculation:** Automatically calculates reduction needed to keep trilha exactly `db_offset` dB below main audio
+3. **Looping:** Background music automatically loops to match main audio duration (including partial loops)
+4. **Mixing:** FFmpeg mixes both tracks with calculated volume reduction applied
+
+**Formula:**
+```
+volumeReduction = trilhaVolume - audioVolume + dbOffset
+```
+
+**Example:**
+```
+Main audio:        -15 dB (analyzed)
+Trilha sonora:     -10 dB (analyzed)
+db_offset:          30 dB (parameter)
+───────────────────────────────────
+Reduction needed:   35 dB
+
+Result:
+Main audio:        -15 dB (unchanged)
+Trilha (mixed):    -45 dB (reduced by 35 dB)
+Difference:         30 dB ✓ (exactly as requested)
+```
+
+**Looping Behavior:**
+```
+Audio duration:     60s
+Trilha duration:    25s
+Loops needed:       3 (ceil(60/25))
+───────────────────────────────────
+Trilha looped:      [25s][25s][10s] = 60s (cut to match)
+Final output:       60s (exactly matches audio duration)
+```
+
+**Features:**
+- ✅ Automatic volume normalization based on audio analysis
+- ✅ Smart looping with automatic trimming
+- ✅ Google Drive support for both audio inputs
+- ✅ Professional audio mixing using FFmpeg
+- ✅ Handles URLs with spaces (automatic encoding)
+- ✅ Output always matches main audio duration exactly
+
+**Google Drive Support:**
+- Supports direct download from Google Drive URLs
+- Handles large files (>25MB) with confirmation tokens
+- Accepts various Google Drive URL formats
+
+**Use Cases:**
+- Add background music to podcasts
+- Mix narration with ambient soundtracks
+- Create professional audio content with music beds
+- Automated audio production workflows
+
+**Technical Details:**
+- Codec: MP3 (libmp3lame)
+- Bitrate: 192 kbps
+- Sample rate: 44.1 kHz (preserved from source)
+- Channels: Stereo (preserved from source)
+- Filter chain: `aloop → volume → amix duration=first`
+
+---
+
 ### GET /vps/audio/health
 
 Health check for audio processing service.
@@ -874,7 +983,18 @@ Health check for audio processing service.
 ```json
 {
   "status": "healthy",
-  "service": "audio-processing",
+  "service": "VPS Audio Processor",
+  "ffmpeg": "available",
+  "timestamp": "2025-10-21T12:00:00.000Z"
+}
+```
+
+**Unhealthy Response (503):**
+```json
+{
+  "status": "unhealthy",
+  "service": "VPS Audio Processor",
+  "ffmpeg": "unavailable",
   "timestamp": "2025-10-21T12:00:00.000Z"
 }
 ```
@@ -1504,7 +1624,16 @@ interface WebhookPayload {
 
 ## Changelog
 
-### v4.1.0 (Current - 2025-10-23)
+### v4.1.1 (Current - 2025-10-24)
+- ✅ **NEW:** Added `/vps/audio/trilhasonora` - Mix audio with background music (CPU-based)
+- ✅ **IMPROVED:** Simplified trilha sonora mixing to use single `db_offset` parameter
+- ✅ **FIXED:** Corrected FFmpeg aloop bug (now uses `loop=N-1` instead of `loop=N`)
+- ✅ **ENHANCED:** Automatic volume normalization based on analyzed audio levels
+- ✅ **FEATURE:** Smart looping with automatic trimming to match audio duration
+- ✅ **FEATURE:** Google Drive support for both audio inputs (handles files >25MB)
+- ✅ Complete documentation for `/vps/audio/trilhasonora` endpoint
+
+### v4.1.0 (2025-10-23)
 - ✅ **NEW:** Added `/runpod/audio/transcribe-whisper` - OpenAI Whisper Official endpoint
 - ✅ **NEW:** Added `/runpod/video/trilhasonora` - Background music with volume reduction
 - ✅ **NEW:** Added `GET /` root endpoint with API information
@@ -1547,5 +1676,5 @@ interface WebhookPayload {
 
 ---
 
-**Last Updated:** 2025-10-23
-**API Version:** 4.1.0
+**Last Updated:** 2025-10-24
+**API Version:** 4.1.1
