@@ -320,6 +320,7 @@ export type JobOperation =
   | 'concatenate'
   | 'concat_video_audio'
   | 'trilhasonora'
+  | 'trilhasonora_gpu'
   // VPS (local CPU-based) operations
   | 'img2vid_vps'
   | 'caption_segments_vps'
