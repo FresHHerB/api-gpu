@@ -501,13 +501,15 @@ def download_google_drive_file(url: str, output_path: Path) -> None:
     Google Drive shows a virus scan warning for large files, requiring
     a confirmation token. This function handles that automatically.
 
+    Implements exponential backoff retry for transient errors (5xx, timeouts, connection errors).
+
     Args:
         url: Google Drive URL (will be converted if needed)
         output_path: Path to save the downloaded file
 
     Raises:
         ValueError: If download fails or file is empty
-        requests.exceptions.RequestException: On network errors
+        requests.exceptions.RequestException: On network errors after all retries
     """
     # Convert to direct download URL if needed
     if 'drive.google.com' in url and '/uc?' not in url:
@@ -515,101 +517,161 @@ def download_google_drive_file(url: str, output_path: Path) -> None:
 
     logger.info(f"📥 Downloading from Google Drive: {url}")
 
-    try:
-        session = requests.Session()
+    # Retry configuration
+    max_retries = 5
+    base_delay = 2  # seconds
+    max_delay = 32  # seconds
 
-        # Initial request
-        response = session.get(url, stream=True, timeout=300, allow_redirects=True)
-        response.raise_for_status()
+    last_exception = None
 
-        # Check for virus scan warning (large files >25MB)
-        # Google Drive returns HTML page with confirmation for large files
-        content_type = response.headers.get('Content-Type', '')
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                # Calculate exponential backoff delay: 2, 4, 8, 16, 32 seconds
+                delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+                logger.info(f"🔄 Retry attempt {attempt + 1}/{max_retries} after {delay}s delay...")
+                time.sleep(delay)
 
-        if 'text/html' in content_type:
-            logger.info("📋 Large file detected - handling virus scan confirmation...")
+            session = requests.Session()
 
-            # Extract UUID from HTML (new Google Drive method)
-            # HTML contains: <input type="hidden" name="uuid" value="xxxxx-xxxxx-xxxxx-xxxxx-xxxxx">
-            html_content = response.text
+            # Initial request
+            response = session.get(url, stream=True, timeout=300, allow_redirects=True)
+            response.raise_for_status()
 
-            import re
-            uuid_match = re.search(r'name="uuid"\s+value="([a-f0-9\-]+)"', html_content)
-            file_id_match = re.search(r'name="id"\s+value="([a-zA-Z0-9_\-]+)"', html_content)
+            # Check for virus scan warning (large files >25MB)
+            # Google Drive returns HTML page with confirmation for large files
+            content_type = response.headers.get('Content-Type', '')
 
-            if uuid_match and file_id_match:
-                uuid = uuid_match.group(1)
-                file_id = file_id_match.group(1)
+            if 'text/html' in content_type:
+                logger.info("📋 Large file detected - handling virus scan confirmation...")
 
-                # Build new URL with drive.usercontent.google.com
-                confirm_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t&uuid={uuid}"
-                logger.info(f"🔄 Retrying with UUID: {uuid[:8]}...")
+                # Extract UUID from HTML (new Google Drive method)
+                # HTML contains: <input type="hidden" name="uuid" value="xxxxx-xxxxx-xxxxx-xxxxx-xxxxx">
+                html_content = response.text
 
-                response = session.get(confirm_url, stream=True, timeout=300, allow_redirects=True)
-                response.raise_for_status()
-            else:
-                # Fallback: try old method with download_warning cookie
-                logger.warning("⚠️ Could not extract UUID from HTML, trying old cookie method...")
-                token = None
-                for key, value in response.cookies.items():
-                    if key.startswith('download_warning'):
-                        token = value
-                        break
+                import re
+                uuid_match = re.search(r'name="uuid"\s+value="([a-f0-9\-]+)"', html_content)
+                file_id_match = re.search(r'name="id"\s+value="([a-zA-Z0-9_\-]+)"', html_content)
 
-                if token:
-                    confirm_url = url + f"&confirm={token}"
-                    logger.info(f"🔄 Retrying with cookie token...")
+                if uuid_match and file_id_match:
+                    uuid = uuid_match.group(1)
+                    file_id = file_id_match.group(1)
+
+                    # Build new URL with drive.usercontent.google.com
+                    confirm_url = f"https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t&uuid={uuid}"
+                    logger.info(f"🔄 Retrying with UUID: {uuid[:8]}...")
+
                     response = session.get(confirm_url, stream=True, timeout=300, allow_redirects=True)
                     response.raise_for_status()
                 else:
-                    raise ValueError("Could not extract confirmation token from Google Drive. File may be private or restricted.")
+                    # Fallback: try old method with download_warning cookie
+                    logger.warning("⚠️ Could not extract UUID from HTML, trying old cookie method...")
+                    token = None
+                    for key, value in response.cookies.items():
+                        if key.startswith('download_warning'):
+                            token = value
+                            break
 
-        # Download file in chunks
-        total_size = 0
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-                    total_size += len(chunk)
+                    if token:
+                        confirm_url = url + f"&confirm={token}"
+                        logger.info(f"🔄 Retrying with cookie token...")
+                        response = session.get(confirm_url, stream=True, timeout=300, allow_redirects=True)
+                        response.raise_for_status()
+                    else:
+                        raise ValueError("Could not extract confirmation token from Google Drive. File may be private or restricted.")
 
-        file_size = output_path.stat().st_size
-        file_size_mb = file_size / (1024 * 1024)
+            # Download file in chunks
+            total_size = 0
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        total_size += len(chunk)
 
-        logger.info(f"✅ Google Drive download completed: {output_path.name} ({file_size_mb:.2f} MB)")
+            file_size = output_path.stat().st_size
+            file_size_mb = file_size / (1024 * 1024)
 
-        if file_size == 0:
-            raise ValueError(f"Downloaded file is empty: {url}")
+            logger.info(f"✅ Google Drive download completed: {output_path.name} ({file_size_mb:.2f} MB)")
 
-        # Verify it's not an error HTML page (Google Drive sometimes returns HTML instead of file)
-        with open(output_path, 'rb') as f:
-            header = f.read(500)
-            # Check if it's an HTML error page
-            content_start = header.decode('utf-8', errors='ignore')
-            if '<html' in content_start.lower() or '<!doctype' in content_start.lower():
-                raise ValueError(f"Google Drive returned HTML instead of file. File may be private or restricted. First 200 chars: {content_start[:200]}")
+            if file_size == 0:
+                raise ValueError(f"Downloaded file is empty: {url}")
 
-            # Check for valid file formats (MP4, MP3, WAV, etc.)
-            # MP4: 'ftyp' at offset 4-8
-            # MP3: starts with 'ID3' or has 0xFF 0xFB sync pattern
-            # WAV: starts with 'RIFF' and contains 'WAVE'
-            if len(header) >= 12:
-                is_mp4 = b'ftyp' in header[:12]
-                is_mp3 = header[:3] == b'ID3' or (header[0] == 0xFF and header[1] & 0xE0 == 0xE0)
-                is_wav = header[:4] == b'RIFF' and b'WAVE' in header[:20]
+            # Verify it's not an error HTML page (Google Drive sometimes returns HTML instead of file)
+            with open(output_path, 'rb') as f:
+                header = f.read(500)
+                # Check if it's an HTML error page
+                content_start = header.decode('utf-8', errors='ignore')
+                if '<html' in content_start.lower() or '<!doctype' in content_start.lower():
+                    raise ValueError(f"Google Drive returned HTML instead of file. File may be private or restricted. First 200 chars: {content_start[:200]}")
 
-                if not (is_mp4 or is_mp3 or is_wav):
-                    logger.warning(f"⚠️ Downloaded file format unknown (not MP4/MP3/WAV): {output_path.name}")
-                    # Don't fail - might be other valid format
+                # Check for valid file formats (MP4, MP3, WAV, etc.)
+                # MP4: 'ftyp' at offset 4-8
+                # MP3: starts with 'ID3' or has 0xFF 0xFB sync pattern
+                # WAV: starts with 'RIFF' and contains 'WAVE'
+                if len(header) >= 12:
+                    is_mp4 = b'ftyp' in header[:12]
+                    is_mp3 = header[:3] == b'ID3' or (header[0] == 0xFF and header[1] & 0xE0 == 0xE0)
+                    is_wav = header[:4] == b'RIFF' and b'WAVE' in header[:20]
+
+                    if not (is_mp4 or is_mp3 or is_wav):
+                        logger.warning(f"⚠️ Downloaded file format unknown (not MP4/MP3/WAV): {output_path.name}")
+                        # Don't fail - might be other valid format
+                    else:
+                        format_name = 'MP4' if is_mp4 else ('MP3' if is_mp3 else 'WAV')
+                        logger.info(f"✓ Validated file format: {format_name}")
+
+            # Success - break retry loop
+            logger.info(f"✅ Download successful on attempt {attempt + 1}")
+            return
+
+        except (requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            # Check if it's a retryable error
+            is_retryable = False
+
+            if isinstance(e, requests.exceptions.HTTPError):
+                # Retry on 5xx server errors and 429 rate limit
+                if e.response and e.response.status_code >= 500:
+                    is_retryable = True
+                    logger.warning(f"⚠️ Server error {e.response.status_code}: {e}")
+                elif e.response and e.response.status_code == 429:
+                    is_retryable = True
+                    logger.warning(f"⚠️ Rate limit error 429: {e}")
+            else:
+                # Connection errors and timeouts are retryable
+                is_retryable = True
+                logger.warning(f"⚠️ Connection/Timeout error: {e}")
+
+            last_exception = e
+
+            if is_retryable and attempt < max_retries - 1:
+                # Will retry
+                continue
+            else:
+                # Not retryable or max retries reached
+                if is_retryable:
+                    logger.error(f"❌ Max retries ({max_retries}) reached. Last error: {e}")
                 else:
-                    format_name = 'MP4' if is_mp4 else ('MP3' if is_mp3 else 'WAV')
-                    logger.info(f"✓ Validated file format: {format_name}")
+                    logger.error(f"❌ Non-retryable error: {e}")
+                raise
 
-    except requests.exceptions.RequestException as e:
-        logger.error(f"❌ Google Drive download failed: {e}")
-        raise
-    except Exception as e:
-        logger.error(f"❌ Failed to download from Google Drive: {e}")
-        raise
+        except ValueError as e:
+            # ValueError is not retryable (e.g., invalid file, private file)
+            logger.error(f"❌ Validation error: {e}")
+            raise
+
+        except Exception as e:
+            # Other exceptions are not retryable
+            logger.error(f"❌ Unexpected error: {e}")
+            raise
+
+    # If we get here, all retries failed
+    if last_exception:
+        logger.error(f"❌ All {max_retries} retry attempts failed")
+        raise last_exception
+    else:
+        raise RuntimeError("Download failed for unknown reason")
 
 
 # HTTP Server for serving videos (caption/addaudio only)
