@@ -1,19 +1,24 @@
 // ============================================
-// ElevenLabs TTS Provider
+// ElevenLabs TTS Provider (OPTIMIZED)
 // Documentation: https://elevenlabs.io/docs/api-reference/text-to-speech/convert
 // ============================================
 
-import axios, { AxiosError } from 'axios';
+import { AxiosError, AxiosInstance } from 'axios';
 import { TTSProvider, TTSGenerationParams, TTSGenerationResult } from './TTSProvider';
+import { createOptimizedHTTPClient } from './OptimizedHTTPClient';
 import { logger } from '../../../shared/utils/logger';
 
 export class ElevenLabsProvider extends TTSProvider {
-  private readonly baseUrl = 'https://api.elevenlabs.io/v1';
+  private readonly baseUrl = 'https://api.elevenlabs.io';
   private readonly model = 'eleven_multilingual_v2';
+  private readonly httpClient: AxiosInstance;
 
   constructor(apiKey: string, maxRetries: number = 3) {
     super(apiKey, maxRetries);
     this.validateConfig();
+
+    // Create optimized HTTP client with connection pooling
+    this.httpClient = createOptimizedHTTPClient(this.baseUrl);
   }
 
   validateConfig(): void {
@@ -45,10 +50,8 @@ export class ElevenLabsProvider extends TTSProvider {
           speed
         });
 
-        const endpoint = `${this.baseUrl}/text-to-speech/${voiceId}`;
-
-        const response = await axios.post(
-          endpoint,
+        const response = await this.httpClient.post(
+          `/v1/text-to-speech/${voiceId}`,
           {
             text,
             model_id: this.model,
@@ -65,11 +68,12 @@ export class ElevenLabsProvider extends TTSProvider {
               'Content-Type': 'application/json'
             },
             params: {
-              output_format: 'mp3_44100_128' // MP3, 44.1kHz, 128kbps
+              output_format: 'mp3_44100_128', // MP3, 44.1kHz, 128kbps
+              optimize_streaming_latency: 2 // OPTIMIZED: Level 2 for better latency (0-4)
             },
             responseType: 'arraybuffer',
-            timeout: 60000, // 60s timeout
-            validateStatus: (status) => status < 500 // Don't throw on 4xx errors
+            timeout: 60000,
+            validateStatus: (status) => status < 500
           }
         );
 
@@ -142,8 +146,8 @@ export class ElevenLabsProvider extends TTSProvider {
   }
 
   private parseError(error: unknown): { message: string; code?: string; status?: number } {
-    if (axios.isAxiosError(error)) {
-      const axiosError = error as AxiosError;
+    const axiosError = error as AxiosError;
+    if (axiosError.isAxiosError || axiosError.response) {
       return {
         message: axiosError.message,
         code: axiosError.code,

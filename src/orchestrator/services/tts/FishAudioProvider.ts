@@ -1,19 +1,23 @@
 // ============================================
-// Fish Audio TTS Provider
+// Fish Audio TTS Provider (OPTIMIZED)
 // Documentation: https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech
 // ============================================
 
-import axios, { AxiosError } from 'axios';
+import { AxiosError, AxiosInstance } from 'axios';
 import { TTSProvider, TTSGenerationParams, TTSGenerationResult } from './TTSProvider';
+import { createOptimizedHTTPClient } from './OptimizedHTTPClient';
 import { logger } from '../../../shared/utils/logger';
 
 export class FishAudioProvider extends TTSProvider {
-  private readonly endpoint = 'https://api.fish.audio/v1/tts';
   private readonly model = 'speech-1.5';
+  private readonly httpClient: AxiosInstance;
 
   constructor(apiKey: string, maxRetries: number = 3) {
     super(apiKey, maxRetries);
     this.validateConfig();
+
+    // Create optimized HTTP client with connection pooling
+    this.httpClient = createOptimizedHTTPClient('https://api.fish.audio');
   }
 
   validateConfig(): void {
@@ -45,14 +49,15 @@ export class FishAudioProvider extends TTSProvider {
           speed
         });
 
-        const response = await axios.post(
-          this.endpoint,
+        const response = await this.httpClient.post(
+          '/v1/tts',
           {
             text,
             reference_id: voiceId,
             format: 'mp3',
             normalize: true,
-            latency: 'normal',
+            latency: 'balanced', // OPTIMIZED: balanced mode for better latency
+            chunk_length: 200, // OPTIMIZED: chunk size for streaming
             ...(speed !== 1.0 && {
               prosody: {
                 speed
@@ -66,8 +71,8 @@ export class FishAudioProvider extends TTSProvider {
               'model': this.model
             },
             responseType: 'arraybuffer',
-            timeout: 60000, // 60s timeout
-            validateStatus: (status) => status < 500 // Don't throw on 4xx errors
+            timeout: 60000,
+            validateStatus: (status) => status < 500
           }
         );
 
@@ -129,8 +134,8 @@ export class FishAudioProvider extends TTSProvider {
   }
 
   private parseError(error: unknown): { message: string; code?: string; status?: number } {
-    if (axios.isAxiosError(error)) {
-      const axiosError = error as AxiosError;
+    const axiosError = error as AxiosError;
+    if (axiosError.isAxiosError || axiosError.response) {
       return {
         message: axiosError.message,
         code: axiosError.code,
