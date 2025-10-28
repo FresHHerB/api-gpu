@@ -8,11 +8,15 @@ import { Router, Request, Response } from 'express';
 import { logger } from '../../shared/utils/logger';
 import Joi from 'joi';
 import { LocalAudioProcessor } from '../workers/localAudioProcessor';
+import { TTSBatchProcessor } from '../services/tts/TTSBatchProcessor';
 
 const router = Router();
 
 // Initialize audio processor
 const audioProcessor = new LocalAudioProcessor();
+
+// Initialize TTS batch processor
+const ttsProcessor = new TTSBatchProcessor();
 
 // ============================================
 // Validation Schema
@@ -66,6 +70,46 @@ const trilhaSonoraSchema = Joi.object({
     'number.min': 'db_offset must be at least 0',
     'number.max': 'db_offset must be at most 50'
   })
+});
+
+const ttsSchema = Joi.object({
+  trechos: Joi.array()
+    .items(
+      Joi.object({
+        id: Joi.number().integer().positive().required().messages({
+          'number.base': 'id must be a number',
+          'number.positive': 'id must be positive'
+        }),
+        trecho: Joi.string().required().min(1).messages({
+          'string.empty': 'trecho cannot be empty'
+        })
+      })
+    )
+    .min(1)
+    .required()
+    .messages({
+      'array.min': 'At least 1 trecho is required'
+    }),
+  plataforma: Joi.string()
+    .valid('fishaudio', 'elevenlabs')
+    .required()
+    .messages({
+      'any.only': 'plataforma must be either "fishaudio" or "elevenlabs"'
+    }),
+  api_key: Joi.string().required().messages({
+    'string.empty': 'api_key is required'
+  }),
+  voice_id: Joi.string().required().messages({
+    'string.empty': 'voice_id is required'
+  }),
+  speed: Joi.number().min(0.25).max(4.0).optional().default(1.0).messages({
+    'number.min': 'speed must be at least 0.25',
+    'number.max': 'speed must be at most 4.0'
+  }),
+  path: Joi.string().required().messages({
+    'string.empty': 'path is required (e.g., "Channel Name/Video Title/audios/")'
+  }),
+  output_filename: Joi.string().optional().default('audio')
 });
 
 // ============================================
@@ -230,6 +274,95 @@ router.post('/vps/audio/trilhasonora', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: 'Audio mixing with trilha sonora failed',
+      message: error.message,
+      processing_time_ms: processingTime
+    });
+  }
+});
+
+// ============================================
+// POST /vps/audio/tts
+// Generate audio from text using TTS providers
+// Synchronous - returns result immediately (no webhook)
+// Supports: Fish Audio, ElevenLabs
+// ============================================
+
+router.post('/vps/audio/tts', async (req: Request, res: Response) => {
+  const startTime = Date.now();
+
+  try {
+    // Validate request
+    const { error, value } = ttsSchema.validate(req.body);
+
+    if (error) {
+      logger.warn('[VPS Audio TTS] Validation error', {
+        error: error.details[0].message,
+        body: req.body
+      });
+
+      return res.status(400).json({
+        success: false,
+        error: 'Validation error',
+        message: error.details[0].message
+      });
+    }
+
+    const { trechos, plataforma, api_key, voice_id, speed, path, output_filename } = value;
+
+    logger.info('[VPS Audio TTS] Starting TTS batch processing', {
+      platform: plataforma,
+      trechosCount: trechos.length,
+      path,
+      output_filename,
+      speed
+    });
+
+    // Process TTS batch
+    const result = await ttsProcessor.processBatch(trechos, {
+      plataforma,
+      api_key,
+      voice_id,
+      speed,
+      path,
+      output_filename,
+      concurrent_limit: 5 // Process 5 at a time
+    });
+
+    const processingTime = Date.now() - startTime;
+
+    logger.info('[VPS Audio TTS] Batch processing complete', {
+      total: result.total,
+      successful: result.successful,
+      failed: result.failed,
+      processingTime: `${(processingTime / 1000).toFixed(2)}s`,
+      avgTimePerItem: `${(processingTime / result.total / 1000).toFixed(2)}s`
+    });
+
+    // Return result immediately
+    return res.status(200).json({
+      success: true,
+      platform: plataforma,
+      total: result.total,
+      successful: result.successful,
+      failed: result.failed,
+      results: result.results,
+      processing_time_ms: processingTime,
+      avg_time_per_item_ms: Math.round(processingTime / result.total),
+      message: `TTS batch processing complete: ${result.successful}/${result.total} successful`
+    });
+
+  } catch (error: any) {
+    const processingTime = Date.now() - startTime;
+
+    logger.error('[VPS Audio TTS] Batch processing failed', {
+      error: error.message,
+      stack: error.stack,
+      processingTime: `${(processingTime / 1000).toFixed(2)}s`
+    });
+
+    return res.status(500).json({
+      success: false,
+      error: 'TTS batch processing failed',
       message: error.message,
       processing_time_ms: processingTime
     });
