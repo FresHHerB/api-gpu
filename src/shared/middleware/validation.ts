@@ -39,7 +39,7 @@ export const img2VidRequestSchema = Joi.object({
     Joi.object({
       id: Joi.string().required(),
       image_url: Joi.string().pattern(/^https?:\/\/.+/).required(),
-      duracao: Joi.number().min(0.1).max(300).required()
+      duracao: Joi.number().min(0.1).max(1000).required()
     })
   ).min(1).required(),
   path: Joi.string().required(),
