@@ -273,9 +273,11 @@ export class QueueManager {
     if (job.operation === 'img2vid') {
       const imageCount = job.payload.images?.length || 0;
 
-      // Calcular workers ideais baseado no batch size (34 images/worker)
-      if (imageCount > 50) {
-        const idealWorkers = Math.ceil(imageCount / 34);
+      // Multi-worker strategy for 30+ images (matches runpodService.ts threshold)
+      // Each worker handles ~11 images optimally (3 workers for 31+ images)
+      if (imageCount > 30) {
+        const IMAGES_PER_WORKER = 11; // Optimal batch size per worker
+        const idealWorkers = Math.ceil(imageCount / IMAGES_PER_WORKER);
 
         // CRITICAL: SEMPRE limitar ao máximo disponível
         workersNeeded = Math.min(this.maxWorkers, idealWorkers);
