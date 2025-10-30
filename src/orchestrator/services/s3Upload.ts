@@ -82,7 +82,8 @@ export class S3UploadService {
         await this.s3Client.send(command);
 
         // Construct public URL
-        const endpoint = process.env.S3_ENDPOINT_URL!;
+        // Remove trailing slash from endpoint to avoid double slashes
+        const endpoint = process.env.S3_ENDPOINT_URL!.replace(/\/$/, '');
         const publicUrl = `${endpoint}/${this.bucketName}/${key}`;
 
         console.log(`[S3UploadService] Upload successful: ${publicUrl}`);
