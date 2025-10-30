@@ -318,6 +318,8 @@ router.post('/vps/audio/tts', async (req: Request, res: Response) => {
     });
 
     // Process TTS batch
+    // Note: concurrent_limit works WITH global rate limiter (max 5 for Fish Audio)
+    // Using 3 to leave room for other simultaneous requests to the endpoint
     const result = await ttsProcessor.processBatch(trechos, {
       plataforma,
       api_key,
@@ -325,7 +327,7 @@ router.post('/vps/audio/tts', async (req: Request, res: Response) => {
       speed,
       path,
       output_filename,
-      concurrent_limit: 5 // Process 5 at a time
+      concurrent_limit: 3 // Conservative limit - global rate limiter handles the rest
     });
 
     const processingTime = Date.now() - startTime;

@@ -1,11 +1,12 @@
 // ============================================
-// ElevenLabs TTS Provider (OPTIMIZED)
+// ElevenLabs TTS Provider (OPTIMIZED + RATE LIMITED)
 // Documentation: https://elevenlabs.io/docs/api-reference/text-to-speech/convert
 // ============================================
 
 import { AxiosError, AxiosInstance } from 'axios';
 import { TTSProvider, TTSGenerationParams, TTSGenerationResult } from './TTSProvider';
 import { createOptimizedHTTPClient } from './OptimizedHTTPClient';
+import { elevenLabsRateLimiter } from './RateLimiter';
 import { logger } from '../../../shared/utils/logger';
 
 export class ElevenLabsProvider extends TTSProvider {
@@ -34,6 +35,13 @@ export class ElevenLabsProvider extends TTSProvider {
   async generateAudio(params: TTSGenerationParams): Promise<TTSGenerationResult> {
     const { text, voiceId, speed = 1.0 } = params;
 
+    // Use global rate limiter to prevent exceeding concurrent request limits
+    return elevenLabsRateLimiter.execute(async () => {
+      return this.generateWithRetry(text, voiceId, speed);
+    });
+  }
+
+  private async generateWithRetry(text: string, voiceId: string, speed: number): Promise<TTSGenerationResult> {
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
         if (attempt > 1) {
@@ -47,7 +55,8 @@ export class ElevenLabsProvider extends TTSProvider {
         logger.info(`[${this.getProviderName()}] Generating audio (attempt ${attempt}/${this.maxRetries})`, {
           textLength: text.length,
           voiceId,
-          speed
+          speed,
+          rateLimiter: elevenLabsRateLimiter.getStatus()
         });
 
         const response = await this.httpClient.post(
@@ -103,8 +112,24 @@ export class ElevenLabsProvider extends TTSProvider {
           error: errorInfo.message,
           code: errorInfo.code,
           status: errorInfo.status,
-          textPreview: text.substring(0, 50)
+          textPreview: text.substring(0, 50),
+          rateLimiter: elevenLabsRateLimiter.getStatus()
         });
+
+        // Special handling for rate limit errors (429)
+        if (errorInfo.status === 429) {
+          const rateLimitDelay = this.getRateLimitRetryDelay(attempt);
+          logger.warn(`[${this.getProviderName()}] Rate limit hit, waiting ${rateLimitDelay}ms before retry`, {
+            attempt,
+            maxRetries: this.maxRetries,
+            rateLimiter: elevenLabsRateLimiter.getStatus()
+          });
+
+          if (!isLastAttempt) {
+            await this.sleep(rateLimitDelay);
+            continue;
+          }
+        }
 
         // Don't retry on client errors (4xx) except rate limits
         if (errorInfo.status && errorInfo.status >= 400 && errorInfo.status < 500 && errorInfo.status !== 429) {
@@ -118,6 +143,19 @@ export class ElevenLabsProvider extends TTSProvider {
     }
 
     throw new Error(`${this.getProviderName()} failed: max retries exceeded`);
+  }
+
+  /**
+   * Get retry delay for rate limit errors (429)
+   * Uses exponential backoff with jitter
+   */
+  private getRateLimitRetryDelay(attempt: number): number {
+    const baseDelay = 5000; // 5 seconds base
+    const exponentialDelay = baseDelay * Math.pow(2, attempt - 1);
+    const jitter = Math.random() * 1000; // 0-1000ms random jitter
+    const maxDelay = 60000; // Cap at 60 seconds
+
+    return Math.min(exponentialDelay + jitter, maxDelay);
   }
 
   private parseErrorResponse(data: any): string {

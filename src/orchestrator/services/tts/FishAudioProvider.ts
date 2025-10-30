@@ -1,11 +1,13 @@
 // ============================================
-// Fish Audio TTS Provider (OPTIMIZED)
+// Fish Audio TTS Provider (OPTIMIZED + RATE LIMITED)
 // Documentation: https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech
+// Rate Limits: https://docs.fish.audio/developer-platform/models-pricing/pricing-and-rate-limits
 // ============================================
 
 import { AxiosError, AxiosInstance } from 'axios';
 import { TTSProvider, TTSGenerationParams, TTSGenerationResult } from './TTSProvider';
 import { createOptimizedHTTPClient } from './OptimizedHTTPClient';
+import { fishAudioRateLimiter } from './RateLimiter';
 import { logger } from '../../../shared/utils/logger';
 
 export class FishAudioProvider extends TTSProvider {
@@ -33,6 +35,13 @@ export class FishAudioProvider extends TTSProvider {
   async generateAudio(params: TTSGenerationParams): Promise<TTSGenerationResult> {
     const { text, voiceId, speed = 1.0 } = params;
 
+    // Use global rate limiter to prevent exceeding concurrent request limits
+    return fishAudioRateLimiter.execute(async () => {
+      return this.generateWithRetry(text, voiceId, speed);
+    });
+  }
+
+  private async generateWithRetry(text: string, voiceId: string, speed: number): Promise<TTSGenerationResult> {
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
         if (attempt > 1) {
@@ -46,7 +55,8 @@ export class FishAudioProvider extends TTSProvider {
         logger.info(`[${this.getProviderName()}] Generating audio (attempt ${attempt}/${this.maxRetries})`, {
           textLength: text.length,
           voiceId,
-          speed
+          speed,
+          rateLimiter: fishAudioRateLimiter.getStatus()
         });
 
         const response = await this.httpClient.post(
@@ -102,8 +112,25 @@ export class FishAudioProvider extends TTSProvider {
           error: errorInfo.message,
           code: errorInfo.code,
           status: errorInfo.status,
-          textPreview: text.substring(0, 50)
+          textPreview: text.substring(0, 50),
+          rateLimiter: fishAudioRateLimiter.getStatus()
         });
+
+        // Special handling for rate limit errors (429)
+        if (errorInfo.status === 429) {
+          // Use exponential backoff with longer delays for rate limits
+          const rateLimitDelay = this.getRateLimitRetryDelay(attempt);
+          logger.warn(`[${this.getProviderName()}] Rate limit hit, waiting ${rateLimitDelay}ms before retry`, {
+            attempt,
+            maxRetries: this.maxRetries,
+            rateLimiter: fishAudioRateLimiter.getStatus()
+          });
+
+          if (!isLastAttempt) {
+            await this.sleep(rateLimitDelay);
+            continue;
+          }
+        }
 
         // Don't retry on client errors (4xx) except rate limits
         if (errorInfo.status && errorInfo.status >= 400 && errorInfo.status < 500 && errorInfo.status !== 429) {
@@ -117,6 +144,19 @@ export class FishAudioProvider extends TTSProvider {
     }
 
     throw new Error(`${this.getProviderName()} failed: max retries exceeded`);
+  }
+
+  /**
+   * Get retry delay for rate limit errors (429)
+   * Uses exponential backoff with jitter: base * 2^attempt + random(0-1000ms)
+   */
+  private getRateLimitRetryDelay(attempt: number): number {
+    const baseDelay = 5000; // 5 seconds base
+    const exponentialDelay = baseDelay * Math.pow(2, attempt - 1);
+    const jitter = Math.random() * 1000; // 0-1000ms random jitter
+    const maxDelay = 60000; // Cap at 60 seconds
+
+    return Math.min(exponentialDelay + jitter, maxDelay);
   }
 
   private parseErrorResponse(data: any): string {

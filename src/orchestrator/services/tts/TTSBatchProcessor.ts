@@ -1,12 +1,20 @@
 // ============================================
-// TTS Batch Processor
+// TTS Batch Processor (RATE LIMITED)
 // Processes TTS generation in batches with S3 upload
+//
+// RATE LIMITING:
+// - Uses global rate limiters in providers (FishAudioProvider, ElevenLabsProvider)
+// - Fish Audio: Max 5 concurrent requests globally
+// - ElevenLabs: Max 2 concurrent requests globally
+// - Multiple simultaneous endpoint calls are automatically queued
+// - Prevents "Too Many Requests" (429) errors
 // ============================================
 
 import { TTSProvider } from './TTSProvider';
 import { FishAudioProvider } from './FishAudioProvider';
 import { ElevenLabsProvider } from './ElevenLabsProvider';
 import { S3UploadService } from '../s3Upload';
+import { fishAudioRateLimiter, elevenLabsRateLimiter } from './RateLimiter';
 import { logger } from '../../../shared/utils/logger';
 
 export interface TTSBatchItem {
@@ -52,20 +60,32 @@ export class TTSBatchProcessor {
 
   /**
    * Process TTS batch with concurrent limit
+   *
+   * IMPORTANT: concurrent_limit works WITH global rate limiter:
+   * - If concurrent_limit > global limit: requests are automatically queued
+   * - Fish Audio global limit: 5 concurrent
+   * - ElevenLabs global limit: 2 concurrent
+   * - Multiple endpoint calls share the same global limit
    */
   async processBatch(
     items: TTSBatchItem[],
     config: TTSBatchConfig
   ): Promise<TTSBatchSummary> {
     const startTime = Date.now();
-    const concurrentLimit = config.concurrent_limit || 5;
+    const concurrentLimit = config.concurrent_limit || 3;
+
+    // Get rate limiter status
+    const rateLimiterStatus = config.plataforma === 'fishaudio'
+      ? fishAudioRateLimiter.getStatus()
+      : elevenLabsRateLimiter.getStatus();
 
     logger.info('[TTS Batch] Starting batch processing', {
       total: items.length,
       platform: config.plataforma,
       concurrentLimit,
       path: config.path,
-      outputFilename: config.output_filename
+      outputFilename: config.output_filename,
+      globalRateLimiter: rateLimiterStatus
     });
 
     // Create provider
@@ -90,9 +110,15 @@ export class TTSBatchProcessor {
 
       results.push(...batchResults);
 
+      // Get updated rate limiter status
+      const updatedRateLimiterStatus = config.plataforma === 'fishaudio'
+        ? fishAudioRateLimiter.getStatus()
+        : elevenLabsRateLimiter.getStatus();
+
       logger.info(`[TTS Batch] Batch ${batchNumber}/${totalBatches} complete`, {
         successful: batchResults.filter(r => r.success).length,
-        failed: batchResults.filter(r => !r.success).length
+        failed: batchResults.filter(r => !r.success).length,
+        globalRateLimiter: updatedRateLimiterStatus
       });
     }
 
