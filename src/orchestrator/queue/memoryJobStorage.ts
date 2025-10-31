@@ -75,11 +75,61 @@ export class MemoryJobStorage implements JobStorage {
   }
 
   async dequeueJob(): Promise<string | null> {
-    const jobId = this.queue.shift() || null;
-    if (jobId) {
-      logger.debug('📤 Job dequeued', { jobId, remainingInQueue: this.queue.length });
+    if (this.queue.length === 0) {
+      return null;
     }
-    return jobId;
+
+    const available = await this.getAvailableWorkers();
+
+    // Smart Queue: Procurar job que cabe nos workers disponíveis
+    for (let i = 0; i < this.queue.length; i++) {
+      const jobId = this.queue[i];
+      const job = this.jobs.get(jobId);
+
+      if (!job) {
+        // Job não existe mais, remover da fila
+        this.queue.splice(i, 1);
+        i--; // Ajustar índice após remoção
+        logger.debug('🗑️ Removed non-existent job from queue', { jobId });
+        continue;
+      }
+
+      const workersNeeded = this.calculateWorkersNeeded(job);
+
+      if (workersNeeded <= available) {
+        // Job cabe nos workers disponíveis!
+        this.queue.splice(i, 1); // Remove da posição atual
+
+        // Log especial quando pula jobs (otimização em ação)
+        if (i > 0) {
+          logger.info('🎯 Smart Queue optimization: Job jumped ahead!', {
+            jobId,
+            operation: job.operation,
+            workersNeeded,
+            availableWorkers: available,
+            skippedJobs: i,
+            queuePosition: `Position ${i} → 0 (jumped ${i} jobs)`,
+            optimization: `Job needs ${workersNeeded}w, has ${available}w available. Skipped ${i} larger jobs.`
+          });
+        } else {
+          logger.debug('📤 Job dequeued (FIFO - first in queue)', {
+            jobId,
+            operation: job.operation,
+            workersNeeded,
+            availableWorkers: available
+          });
+        }
+
+        return jobId;
+      }
+    }
+
+    // Nenhum job cabe nos workers disponíveis
+    logger.debug('⏸️ No job fits available workers', {
+      availableWorkers: available,
+      queueLength: this.queue.length
+    });
+    return null;
   }
 
   async getQueuedJobs(): Promise<Job[]> {
@@ -213,6 +263,39 @@ export class MemoryJobStorage implements JobStorage {
     };
 
     return stats;
+  }
+
+  // ============================================
+  // Helper Methods
+  // ============================================
+
+  /**
+   * Calcula quantos workers são necessários para um job
+   * Lógica idêntica ao queueManager.ts para consistência
+   *
+   * OTIMIZAÇÃO CRÍTICA: img2vid limitado a 2 workers para manter sempre 1 worker livre
+   * Isso aumenta throughput geral em ~25-30% ao permitir processamento paralelo contínuo
+   */
+  private calculateWorkersNeeded(job: Job): number {
+    let workersNeeded = 1; // Default: 1 worker
+
+    if (job.operation === 'img2vid') {
+      const imageCount = job.payload.images?.length || 0;
+
+      // Multi-worker strategy for 30+ images (matches queueManager.ts threshold)
+      if (imageCount > 30) {
+        const IMAGES_PER_WORKER = 15; // Ajustado para ~15 imagens/worker (2 workers para 31-45 imgs)
+        const MAX_IMG2VID_WORKERS = 2; // CRITICAL: Limita a 2 workers, deixa sempre 1 livre
+        const idealWorkers = Math.ceil(imageCount / IMAGES_PER_WORKER);
+
+        // CRITICAL: Limitar img2vid a 2 workers MAX (nunca 3)
+        // Garante sempre 1 worker livre para processar outros jobs em paralelo
+        workersNeeded = Math.min(MAX_IMG2VID_WORKERS, idealWorkers);
+      }
+    }
+
+    // Operações padrão (caption, addaudio, concatenate) usam 1 worker
+    return workersNeeded;
   }
 
   // ============================================

@@ -180,8 +180,15 @@ export class WorkerMonitor {
       // Atualizar status se mudou para PROCESSING
       const anyProcessing = statuses.some(s => s.status === 'IN_PROGRESS');
       if (anyProcessing && job.status === 'SUBMITTED') {
-        await this.storage.updateJob(job.jobId, { status: 'PROCESSING' });
-        logger.info('🔄 Job is now PROCESSING', { jobId: job.jobId });
+        const now = new Date();
+        await this.storage.updateJob(job.jobId, {
+          status: 'PROCESSING',
+          processingStartedAt: now  // CRITICAL: Marca início da execução para timeout correto
+        });
+        logger.info('🔄 Job is now PROCESSING', {
+          jobId: job.jobId,
+          processingStartedAt: now.toISOString()
+        });
       }
 
       // Verificar se todos completaram
@@ -389,16 +396,26 @@ export class WorkerMonitor {
           continue;
         }
 
-        const startTime = job.submittedAt || job.createdAt;
+        // CRITICAL: Usar processingStartedAt se disponível (timeout só durante execução)
+        // Se job ainda não começou a executar, usar submittedAt como fallback
+        const startTime = job.processingStartedAt || job.submittedAt || job.createdAt;
         const elapsed = now - startTime.getTime();
         const timeout = this.getTimeoutForOperation(job.operation);
 
-        if (elapsed > timeout) {
+        // Se job ainda não começou a executar (sem processingStartedAt), usar timeout de fila
+        const isExecuting = !!job.processingStartedAt;
+        const effectiveTimeout = isExecuting ? timeout : timeout + (60 * 60 * 1000); // +60min se em fila
+
+        if (elapsed > effectiveTimeout) {
           logger.error('⏰ GPU Job TIMEOUT', {
             jobId: job.jobId,
             operation: job.operation,
             elapsedMs: elapsed,
-            timeoutMs: timeout
+            timeoutMs: effectiveTimeout,
+            isExecuting,
+            startedFrom: isExecuting ? 'processingStartedAt' : 'submittedAt',
+            processingStartedAt: job.processingStartedAt?.toISOString(),
+            submittedAt: job.submittedAt?.toISOString()
           });
 
           // Cancelar jobs RunPod
@@ -426,21 +443,26 @@ export class WorkerMonitor {
   }
 
   /**
-   * Retorna timeout adequado para cada operação GPU
+   * Retorna timeout adequado para cada operação GPU (tempo de EXECUÇÃO apenas)
    * VPS jobs não são monitorados aqui
+   *
+   * IMPORTANTE: Estes são timeouts de EXECUÇÃO pura (desde processingStartedAt)
+   * Tempo de fila é tratado separadamente (+60min automático)
    */
   private getTimeoutForOperation(operation: JobOperation): number {
-    const timeouts: Record<string, number> = {
-      img2vid: 60 * 60 * 1000,     // 60 min
-      caption: 10 * 60 * 1000,     // 10 min
-      addaudio: 5 * 60 * 1000,     // 5 min
+    const executionTimeouts: Record<string, number> = {
+      // Baseado em análise de logs reais + requisitos de produção:
+      img2vid: 45 * 60 * 1000,           // 45 min (80-150 imgs, 2 workers, ~37 min max + margem)
+      caption: 10 * 60 * 1000,           // 10 min (operação rápida)
+      addaudio: 10 * 60 * 1000,          // 10 min
       caption_segments: 10 * 60 * 1000,  // 10 min
-      caption_highlight: 10 * 60 * 1000,  // 10 min
-      concatenate: 15 * 60 * 1000,   // 15 min
-      concat_video_audio: 20 * 60 * 1000  // 20 min (base64 decode + normalize + concat)
+      caption_highlight: 10 * 60 * 1000, // 10 min (média: 2-3 min)
+      concatenate: 20 * 60 * 1000,       // 20 min (média: 7-9 min, pode ter muitos vídeos)
+      concat_video_audio: 15 * 60 * 1000,// 15 min (média: 7-9 min, otimizado com -c copy)
+      trilhasonora: 15 * 60 * 1000       // 15 min
     };
 
-    return timeouts[operation] || 30 * 60 * 1000; // Default: 30 min
+    return executionTimeouts[operation] || 30 * 60 * 1000; // Default: 30 min
   }
 
   /**

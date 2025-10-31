@@ -340,7 +340,8 @@ export interface Job {
   error?: string;                   // Mensagem de erro (se falhou)
   workersReserved: number;          // Quantos workers este job reservou
   createdAt: Date;
-  submittedAt?: Date;
+  submittedAt?: Date;               // Quando foi submetido ao RunPod
+  processingStartedAt?: Date;       // Quando começou a executar (IN_PROGRESS) - usado para timeout
   completedAt?: Date;
   retryCount: number;               // Tentativas de webhook
   attempts: number;                 // Tentativas de processamento
