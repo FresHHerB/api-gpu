@@ -18,14 +18,44 @@ export class RunPodService {
   private client: AxiosInstance;
   private endpointId: string;
   private config: RunPodEndpointConfig;
+  private s3Config: {
+    endpoint_url: string;
+    access_key: string;
+    secret_key: string;
+    bucket_name: string;
+    region: string;
+  };
 
   constructor() {
     this.endpointId = process.env.RUNPOD_ENDPOINT_ID!;
     const apiKey = process.env.RUNPOD_API_KEY!;
 
+    // Validate required RunPod credentials
     if (!this.endpointId || !apiKey) {
       throw new Error('RUNPOD_ENDPOINT_ID and RUNPOD_API_KEY are required');
     }
+
+    // Validate required S3 credentials (no fallbacks)
+    const s3EndpointUrl = process.env.S3_ENDPOINT_URL;
+    const s3AccessKey = process.env.S3_ACCESS_KEY;
+    const s3SecretKey = process.env.S3_SECRET_KEY;
+    const s3BucketName = process.env.S3_BUCKET_NAME;
+    const s3Region = process.env.S3_REGION;
+
+    if (!s3EndpointUrl || !s3AccessKey || !s3SecretKey || !s3BucketName || !s3Region) {
+      throw new Error(
+        'S3 configuration is required: S3_ENDPOINT_URL, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET_NAME, S3_REGION must be set'
+      );
+    }
+
+    // Store S3 config to be sent with every job
+    this.s3Config = {
+      endpoint_url: s3EndpointUrl,
+      access_key: s3AccessKey,
+      secret_key: s3SecretKey,
+      bucket_name: s3BucketName,
+      region: s3Region
+    };
 
     this.config = {
       endpointId: this.endpointId,
@@ -46,7 +76,15 @@ export class RunPodService {
     logger.info('🚀 RunPodService initialized', {
       endpointId: this.endpointId,
       idleTimeout: this.config.idleTimeout,
-      maxTimeout: this.config.maxTimeout
+      maxTimeout: this.config.maxTimeout,
+      s3Endpoint: s3EndpointUrl,
+      s3Bucket: s3BucketName
+    });
+
+    logger.info('✅ S3 config loaded and will be injected in every job', {
+      endpoint: this.s3Config.endpoint_url,
+      bucket: this.s3Config.bucket_name,
+      region: this.s3Config.region
     });
   }
 
@@ -200,6 +238,7 @@ export class RunPodService {
   /**
    * Submit job to RunPod endpoint (async mode)
    * Public method to allow async endpoints to submit without waiting
+   * Automatically injects S3 configuration from environment
    */
   async submitJob(
     operation: JobOperation,
@@ -208,9 +247,16 @@ export class RunPodService {
     const payload: RunPodJobRequest = {
       input: {
         operation,
-        ...data
+        ...data,
+        s3_config: this.s3Config  // Inject S3 config from environment
       }
     };
+
+    logger.info('📤 Submitting job with S3 config', {
+      operation,
+      s3Endpoint: this.s3Config.endpoint_url,
+      s3Bucket: this.s3Config.bucket_name
+    });
 
     try {
       const response = await this.client.post(

@@ -190,26 +190,34 @@ WORK_DIR, OUTPUT_DIR = get_optimal_work_dir()
 BATCH_SIZE = calculate_optimal_batch_size()
 HTTP_PORT = int(os.getenv('HTTP_PORT', '8000'))
 
-# S3/MinIO Configuration (from environment or job input)
-S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL', 'https://minio.automear.com')
-S3_ACCESS_KEY = os.getenv('S3_ACCESS_KEY', 'admin')
-S3_SECRET_KEY = os.getenv('S3_SECRET_KEY', 'password')
-S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', 'canais')
-S3_REGION = os.getenv('S3_REGION', 'us-east-1')
+# S3/MinIO Configuration (MUST be provided via job input s3_config)
+# No fallbacks - orchestrator must pass configuration dynamically
+S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL', '')
+S3_ACCESS_KEY = os.getenv('S3_ACCESS_KEY', '')
+S3_SECRET_KEY = os.getenv('S3_SECRET_KEY', '')
+S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME', '')
+S3_REGION = os.getenv('S3_REGION', '')
 
 # Ensure directories exist
 WORK_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Initialize S3 client (will be reconfigured if job provides s3_config)
-s3_client = boto3.client(
-    's3',
-    endpoint_url=S3_ENDPOINT_URL,
-    aws_access_key_id=S3_ACCESS_KEY,
-    aws_secret_access_key=S3_SECRET_KEY,
-    region_name=S3_REGION,
-    config=boto3.session.Config(signature_version='s3v4')
-)
+# Initialize S3 client placeholder (MUST be reconfigured by job s3_config)
+# This will be replaced by reconfigure_s3() when job is received
+s3_client = None
+if S3_ENDPOINT_URL and S3_ACCESS_KEY and S3_SECRET_KEY:
+    # Only initialize if template has S3 vars (backward compatibility)
+    logger.info("⚠️ Using S3 config from environment variables (legacy mode)")
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=S3_ENDPOINT_URL,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        region_name=S3_REGION,
+        config=boto3.session.Config(signature_version='s3v4')
+    )
+else:
+    logger.info("✅ S3 client will be configured from job input (orchestrator-driven mode)")
 
 
 def reconfigure_s3(s3_config: Dict[str, str]) -> None:
@@ -2552,10 +2560,22 @@ def handler(job: Dict) -> Dict[str, Any]:
     logger.info(f"📥 Input: {job_input}")
     logger.info(f"🆔 Worker ID: {worker_id}")
 
-    # Reconfigure S3 client if job provides s3_config
+    # S3 config is REQUIRED - orchestrator must always provide it
     s3_config = job_input.get('s3_config')
-    if s3_config:
-        logger.info("🔧 Reconfiguring S3 client with job-specific credentials")
+    if not s3_config:
+        # Check if we have S3 config from environment (legacy mode)
+        if not s3_client:
+            error_msg = (
+                "S3 configuration is required but not provided. "
+                "Orchestrator must pass 's3_config' in job input. "
+                "Required fields: endpoint_url, access_key, secret_key, bucket_name, region"
+            )
+            logger.error(f"❌ {error_msg}")
+            return {"error": error_msg, "error_type": "CONFIG_ERROR"}
+        else:
+            logger.warning("⚠️ Using S3 config from environment variables (legacy mode)")
+    else:
+        logger.info("🔧 Reconfiguring S3 client with orchestrator-provided credentials")
         reconfigure_s3(s3_config)
 
     try:

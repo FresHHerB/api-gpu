@@ -68,3 +68,4 @@ TESTE-*.md
 TEST-*.md
 *-RESULTS.md
 test_*.py
+__pycache__/
