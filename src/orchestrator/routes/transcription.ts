@@ -74,7 +74,7 @@ router.post('/runpod/audio/transcribe', authenticateApiKey, async (req: Request,
     console.log(`[Transcription] Job ${jobId} started`);
 
     // Extract and validate request data
-    const { audio_url, path, model, language, enable_vad, beam_size, temperature } = req.body;
+    let { audio_url, path, model, language, enable_vad, beam_size, temperature } = req.body;
 
     if (!audio_url) {
       return res.status(400).json({
@@ -89,6 +89,14 @@ router.post('/runpod/audio/transcribe', authenticateApiKey, async (req: Request,
         message: 'path is required for S3 upload'
       });
     }
+
+    // Sanitize audio_url and path - remove newlines and extra whitespace
+    // This handles cases where n8n sends multi-line text fields
+    audio_url = audio_url.replace(/[\r\n]+/g, ' ').trim();
+    path = path.replace(/[\r\n]+/g, ' ').trim();
+
+    console.log(`[Transcription] Sanitized audio_url: ${audio_url}`);
+    console.log(`[Transcription] Sanitized path: ${path}`);
 
     // Build transcription request
     const transcriptionRequest: TranscriptionRequest = {
@@ -260,7 +268,7 @@ router.post('/runpod/audio/transcribe-whisper', authenticateApiKey, async (req: 
     console.log(`[Transcription-Whisper] Job ${jobId} started`);
 
     // Extract and validate request data
-    const { audio_url, path, model, language, beam_size, temperature } = req.body;
+    let { audio_url, path, model, language, beam_size, temperature } = req.body;
 
     if (!audio_url) {
       return res.status(400).json({
@@ -275,6 +283,14 @@ router.post('/runpod/audio/transcribe-whisper', authenticateApiKey, async (req: 
         message: 'path is required for S3 upload'
       });
     }
+
+    // Sanitize audio_url and path - remove newlines and extra whitespace
+    // This handles cases where n8n sends multi-line text fields
+    audio_url = audio_url.replace(/[\r\n]+/g, ' ').trim();
+    path = path.replace(/[\r\n]+/g, ' ').trim();
+
+    console.log(`[Transcription-Whisper] Sanitized audio_url: ${audio_url}`);
+    console.log(`[Transcription-Whisper] Sanitized path: ${path}`);
 
     // Build transcription request
     const transcriptionRequest: TranscriptionRequest = {
